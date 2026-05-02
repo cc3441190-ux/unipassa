@@ -2986,6 +2986,17 @@ const DetailView = ({
   const [polishError, setPolishError] = useState<string | null>(null);
   const [thread, setThread] = useState<{ me: boolean; text: string; id: string }[]>([]);
   const polishAbortRef = useRef<AbortController | null>(null);
+
+  type OpenerItem = { icon: string; type: string; text: string };
+  const STATIC_OPENERS = (topic: string, when: string | null, where: string | null, exclusiveText: string, joinHint: string): OpenerItem[] => [
+    { type: '社牛版', icon: '🙋‍♂️', text: `我先来破冰！${topic}${exclusiveText}${when ? `，${when}` : ''}${where ? `，在${where}` : ''}，${joinHint}，我先举手！` },
+    { type: '社恐版', icon: '👀', text: `${topic}${when ? `，${when}` : ''}${where ? `，在${where}` : ''}，我有点社恐先+1，大家更想怎么安排呀？` },
+    { type: '打工人', icon: '🏃', text: `${topic}${when ? `，${when}` : ''}${where ? `，在${where}` : ''}，我这边收个尾就到，${joinHint}！` },
+  ];
+  const [aiOpeners, setAiOpeners] = useState<OpenerItem[] | null>(null);
+  const [aiOpenersLoading, setAiOpenersLoading] = useState(false);
+  const openerAbortRef = useRef<AbortController | null>(null);
+
   /** 输入条容器：润色气泡用 Portal 对齐到 viewport，避免手机壳 DetailView overflow-hidden + 多层模糊导致 React commit 时出现 removeChild 崩溃 */
   const polishFooterRef = useRef<HTMLDivElement>(null);
   const [polishBubbleLayout, setPolishBubbleLayout] = useState<{
@@ -3003,7 +3014,50 @@ const DetailView = ({
     setPolishError(null);
     setShowSuggestion(false);
     setPolishLoading(false);
+    setAiOpeners(null);
   }, [id]);
+
+  useEffect(() => {
+    if (icebreakDone) return;
+    const sceneTitle = scene.title;
+    const sceneType = scene.type;
+    if (!sceneTitle || sceneTitle === '加载中...') return;
+    openerAbortRef.current?.abort();
+    const ac = new AbortController();
+    openerAbortRef.current = ac;
+    setAiOpenersLoading(true);
+    const exclusiveLabelMap: Record<string, string> = { female: '女生局', male: '兄弟局', company: '同公司局' };
+    const exclusiveText = scene.exclusive && exclusiveLabelMap[scene.exclusive] ? `（${exclusiveLabelMap[scene.exclusive]}）` : '';
+    const when = scene.time && scene.time !== '时间待定' ? scene.time : null;
+    const where = scene.distance && scene.distance !== '-' ? scene.distance : null;
+    const left = Math.max(0, (scene.total ?? 0) - (scene.current ?? 0));
+    const contextLine = [
+      `局名：${sceneTitle}（${sceneType}局${exclusiveText}）`,
+      when ? `时间：${when}` : null,
+      where ? `位置：${where}` : null,
+      left > 0 ? `还差 ${left} 人就满了` : '已满员可直接开冲',
+    ].filter(Boolean).join('，');
+    fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: ac.signal,
+      body: JSON.stringify({ mode: 'scene-opener', messages: [{ role: 'user', content: contextLine }] }),
+    })
+      .then(r => r.json())
+      .then((data: { result?: string; error?: string }) => {
+        if (ac.signal.aborted) return;
+        const raw = typeof data.result === 'string' ? data.result.trim() : '';
+        const parts = raw.split('|||').map(s => s.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+          const icons = ['🙋‍♂️', '👀', '🏃'];
+          const types = ['社牛版', '社恐版', '打工人'];
+          setAiOpeners(parts.slice(0, 3).map((text, i) => ({ icon: icons[i] ?? '💬', type: types[i] ?? `风格${i + 1}`, text })));
+        }
+      })
+      .catch(() => { /* 失败时直接保持静态模板，静默处理 */ })
+      .finally(() => { if (!ac.signal.aborted) setAiOpenersLoading(false); });
+    return () => { ac.abort(); };
+  }, [id, icebreakDone, scene.title, scene.type, scene.exclusive, scene.time, scene.distance, scene.total, scene.current]);
 
   useLayoutEffect(() => {
     return () => {
@@ -3152,48 +3206,12 @@ const DetailView = ({
     const when = scene.time && scene.time !== '时间待定' ? scene.time : null;
     const where = scene.distance && scene.distance !== '-' ? scene.distance : null;
     const left = Math.max(0, (scene.total ?? 0) - (scene.current ?? 0));
-    const exclusiveLabelMap: Record<string, string> = {
-      female: '女生局',
-      male: '兄弟局',
-      company: '同公司局',
-    };
-    const exclusiveText =
-      scene.exclusive && exclusiveLabelMap[scene.exclusive]
-        ? `（${exclusiveLabelMap[scene.exclusive]}）`
-        : '';
+    const exclusiveLabelMap: Record<string, string> = { female: '女生局', male: '兄弟局', company: '同公司局' };
+    const exclusiveText = scene.exclusive && exclusiveLabelMap[scene.exclusive] ? `（${exclusiveLabelMap[scene.exclusive]}）` : '';
     const joinHint = left > 0 ? `还差${left}位就齐了` : '人齐可直接开冲';
-    const timeHint = when ? `，${when}` : '';
-    const locationHint = where ? `，在${where}` : '';
-
-    return [
-      {
-        type: '社牛版',
-        icon: '🙋‍♂️',
-        text: `我先来破冰！${topic}${exclusiveText}${timeHint}${locationHint}，${joinHint}，我先举手！`,
-        active: true,
-      },
-      {
-        type: '社恐版',
-        icon: '👀',
-        text: `${topic}${timeHint}${locationHint}，我有点社恐先+1，大家更想怎么安排呀？`,
-        active: false,
-      },
-      {
-        type: '打工人',
-        icon: '🏃',
-        text: `${topic}${timeHint}${locationHint}，我这边收个尾就到，${joinHint}！`,
-        active: false,
-      },
-    ];
-  }, [
-    scene.title,
-    scene.type,
-    scene.time,
-    scene.distance,
-    scene.total,
-    scene.current,
-    scene.exclusive,
-  ]);
+    const fallback = STATIC_OPENERS(topic, when, where, exclusiveText, joinHint);
+    return (aiOpeners && aiOpeners.length >= 2 ? aiOpeners : fallback).map((o, i) => ({ ...o, active: i === 0 }));
+  }, [scene.title, scene.type, scene.time, scene.distance, scene.total, scene.current, scene.exclusive, aiOpeners]);
 
   const showWaitHero = !icebreakDone && inputMode === 'ai' && thread.length === 0;
 
@@ -3260,13 +3278,25 @@ const DetailView = ({
           <div className="relative z-10 rounded-t-[40px] border-t border-white/55 bg-white/72 p-6 pb-10 shadow-[0_-18px_38px_-26px_rgba(64,100,120,0.45)] backdrop-blur-3xl animate-in slide-in-from-bottom-12 fade-in duration-500">
             <div className="mb-5 flex items-center gap-2.5">
               <div className="rounded-[14px] border border-white/70 bg-[linear-gradient(125deg,rgba(150,225,206,0.98)_0%,rgba(176,204,248,0.96)_100%)] p-1.5 shadow-[0_8px_18px_-12px_rgba(64,100,120,0.45)]">
-                <Wand2 size={16} className="animate-pulse text-white" />
+                <Wand2 size={16} className={aiOpenersLoading ? 'animate-spin text-white' : 'animate-pulse text-white'} />
               </div>
-              <span className="text-[13px] font-black text-[#2F3E46]">AI 已为你准备好开场白，选一个吧：</span>
+              <span className="text-[13px] font-black text-[#2F3E46]">
+                {aiOpenersLoading ? 'AI 正在为这个局定制开场白…' : 'AI 已为你准备好开场白，选一个吧：'}
+              </span>
             </div>
 
             <div className="flex flex-col gap-3.5">
-              {openingOptions.map((item, idx) => (
+              {aiOpenersLoading ? (
+                [0, 1, 2].map(i => (
+                  <div key={i} className="flex w-full items-center gap-3.5 rounded-[24px] border border-white/70 bg-white/62 p-4 shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)]">
+                    <div className="h-10 w-10 shrink-0 rounded-full bg-slate-100 animate-pulse" />
+                    <div className="flex flex-1 flex-col gap-1.5">
+                      <div className="h-2.5 w-14 rounded-full bg-slate-100 animate-pulse" />
+                      <div className="h-3.5 w-[80%] rounded-full bg-slate-100 animate-pulse" />
+                    </div>
+                  </div>
+                ))
+              ) : openingOptions.map((item, idx) => (
                 <button
                   key={idx}
                   type="button"

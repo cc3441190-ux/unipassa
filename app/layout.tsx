@@ -30,10 +30,15 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="zh-CN"
+      translate="no"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <head>
+        {/* 阻止 Google / Edge / Bing 翻译插件修改 DOM —— 翻译插件往节点注入属性会导致 React reconcile 时 removeChild 崩溃 */}
+        <meta name="google" content="notranslate" />
+      </head>
+      <body className="min-h-full flex flex-col" translate="no">
         {children}
         {/* Umami 数据埋点（仅在配置了 NEXT_PUBLIC_UMAMI_WEBSITE_ID 时加载） */}
         {process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (

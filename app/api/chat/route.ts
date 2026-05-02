@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
   } else if (mode === 'buddy-polish') {
     systemPrompt =
       '你擅长和同局兴趣搭子在局里聊天。把用户想说的改写成可直接发送的中文消息：自然、友好、像在局里约时间地点或轻松破冰；不要公文腔或职场汇报腔。不超过80字。只输出改写后的内容，不要任何解释或前缀。';
+  } else if (mode === 'scene-opener') {
+    systemPrompt =
+      '你是活跃的职场社交达人，擅长在兴趣局群里发第一条消息破冰。根据用户提供的局信息，生成 3 条风格各异、专属于这个局的开场白，分别对应：①热情社牛、②轻松社恐、③打工人暗语。要求：每条 20-35 字，直接可发送，不要任何编号、前缀或解释；三条之间用 |||（三根竖线）分隔；内容要紧扣局的主题/时间/地点，体现这个局的独特性，不能套模板。只输出三条用 ||| 分隔的消息，不输出任何其他内容。';
   }
 
   try {
@@ -49,7 +52,7 @@ export async function POST(req: NextRequest) {
           },
           ...messages,
         ],
-        max_tokens: mode === 'feed-summary' ? 50 : mode === 'buddy-polish' ? 200 : 300,
+        max_tokens: mode === 'feed-summary' ? 50 : mode === 'buddy-polish' ? 200 : mode === 'scene-opener' ? 250 : 300,
         temperature: 0.7,
       }),
     });
