@@ -2986,6 +2986,13 @@ const DetailView = ({
   const [polishError, setPolishError] = useState<string | null>(null);
   const [thread, setThread] = useState<{ me: boolean; text: string; id: string }[]>([]);
   const polishAbortRef = useRef<AbortController | null>(null);
+  /** 输入条容器：润色气泡用 Portal 对齐到 viewport，避免手机壳 DetailView overflow-hidden + 多层模糊导致 React commit 时出现 removeChild 崩溃 */
+  const polishFooterRef = useRef<HTMLDivElement>(null);
+  const [polishBubbleLayout, setPolishBubbleLayout] = useState<{
+    left: number;
+    width: number;
+    bottom: number;
+  } | null>(null);
 
   useEffect(() => {
     setInputMode(icebreakDone ? 'manual' : 'ai');
@@ -3004,6 +3011,42 @@ const DetailView = ({
       polishAbortRef.current = null;
     };
   }, [id]);
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined' || !showSuggestion) {
+      setPolishBubbleLayout(null);
+      return;
+    }
+    const el = polishFooterRef.current;
+    if (!el) {
+      setPolishBubbleLayout(null);
+      return;
+    }
+    const updateLayout = () => {
+      const r = el.getBoundingClientRect();
+      const horizontalPad = 16;
+      const left = Math.max(8, r.left + horizontalPad);
+      const width = Math.max(220, Math.min(r.width - horizontalPad * 2, window.innerWidth - left - 8));
+      setPolishBubbleLayout({
+        left,
+        width,
+        bottom: Math.max(8, window.innerHeight - r.top + 12),
+      });
+    };
+    updateLayout();
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', updateLayout);
+    vv?.addEventListener('scroll', updateLayout);
+    window.addEventListener('resize', updateLayout);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateLayout) : null;
+    ro?.observe(el);
+    return () => {
+      vv?.removeEventListener('resize', updateLayout);
+      vv?.removeEventListener('scroll', updateLayout);
+      window.removeEventListener('resize', updateLayout);
+      ro?.disconnect();
+    };
+  }, [showSuggestion, thread.length, inputMode, icebreakDone]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3257,55 +3300,11 @@ const DetailView = ({
             </div>
           </div>
         ) : (
-          <div className="relative z-10 border-t border-white/55 bg-white/72 p-4 pb-8 backdrop-blur-3xl shadow-[0_-18px_38px_-26px_rgba(64,100,120,0.45)]">
-            {showSuggestion && (
-              <div
-                className={`absolute bottom-[calc(100%+16px)] left-4 right-4 z-20 rounded-[24px] ${HOME_SURFACE.glassCard} p-5 shadow-[0_12px_40px_-20px_rgba(64,100,120,0.35)]`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <span className="mb-1.5 flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#6EAFA0]">
-                      <Sparkles size={12} /> AI 润色建议
-                    </span>
-                    {polishError && (
-                      <p className="mb-2 text-[11px] font-bold text-amber-700">{polishError}</p>
-                    )}
-                    {polishLoading ? (
-                      <p className="flex items-center gap-2 text-[13px] font-bold text-slate-500">
-                        <Loader2 size={14} className="animate-spin shrink-0" />
-                        正在根据你输入的内容润色…
-                      </p>
-                    ) : (
-                      <p className="text-[14px] font-bold leading-snug text-slate-800 break-words">
-                        {polishSuggestionText ?? '—'}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAdopt}
-                    disabled={polishLoading || !polishSuggestionText?.trim()}
-                    className="mt-1 flex shrink-0 items-center gap-1.5 rounded-xl bg-[linear-gradient(125deg,rgba(150,225,206,0.98)_0%,rgba(176,204,248,0.96)_100%)] px-3.5 py-2.5 text-xs font-black text-white shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)] transition-transform active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    <CheckCircle2 size={14} /> 采用
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowSuggestion(false);
-                    setPolishSuggestionText(null);
-                    setPolishError(null);
-                  }}
-                  className="absolute right-3 top-3 text-slate-300 hover:text-slate-500"
-                >
-                  <X size={14} />
-                </button>
-                <div className="absolute -bottom-2 right-16 h-4 w-4 rotate-45 border-b border-r border-white/70 bg-white/72"></div>
-              </div>
-            )}
-
-            <div className="flex items-center rounded-[24px] border border-white/70 bg-white/60 p-1.5 shadow-[inset_0_1px_8px_rgba(64,100,120,0.06)] backdrop-blur-xl">
+          <div
+            ref={polishFooterRef}
+            className="relative z-10 border-t border-white/55 bg-white/88 p-4 pb-8 shadow-[0_-18px_38px_-26px_rgba(64,100,120,0.45)]"
+          >
+            <div className="flex items-center rounded-[24px] border border-white/70 bg-white/60 p-1.5 shadow-[inset_0_1px_8px_rgba(64,100,120,0.06)]">
               <input
                 type="text"
                 value={messageText}
@@ -3350,6 +3349,72 @@ const DetailView = ({
           </div>
         )}
       </div>
+
+      {showSuggestion &&
+      polishBubbleLayout &&
+      typeof document !== 'undefined' &&
+      createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="AI 润色建议"
+          className="relative rounded-[24px] border border-white/70 bg-white/95 p-5 shadow-[0_14px_34px_-24px_rgba(64,100,120,0.42)]"
+          style={{
+            position: 'fixed',
+            zIndex: 10050,
+            left: polishBubbleLayout.left,
+            width: polishBubbleLayout.width,
+            bottom: polishBubbleLayout.bottom,
+            maxHeight: 'min(48vh, 320px)',
+            overflowY: 'auto',
+          }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <span className="mb-1.5 flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#6EAFA0]">
+                <Sparkles size={12} /> AI 润色建议
+              </span>
+              {polishError ? <p className="mb-2 text-[11px] font-bold text-amber-700">{polishError}</p> : null}
+              <div className="min-h-[44px] text-[13px] font-bold leading-snug">
+                {polishLoading ? (
+                  <span className="flex items-center gap-2 text-slate-500">
+                    <span
+                      className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-[#56756D]"
+                      aria-hidden
+                    />
+                    正在根据你输入的内容润色…
+                  </span>
+                ) : (
+                  <span className="block break-words text-[14px] leading-snug text-slate-800">
+                    {polishSuggestionText ?? '—'}
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleAdopt}
+              disabled={polishLoading || !polishSuggestionText?.trim()}
+              className="mt-1 flex shrink-0 items-center gap-1.5 rounded-xl bg-[linear-gradient(125deg,rgba(150,225,206,0.98)_0%,rgba(176,204,248,0.96)_100%)] px-3.5 py-2.5 text-xs font-black text-white shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)] transition-transform active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+            >
+              <CheckCircle2 size={14} /> 采用
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setShowSuggestion(false);
+              setPolishSuggestionText(null);
+              setPolishError(null);
+            }}
+            className="absolute right-3 top-3 text-slate-300 hover:text-slate-500"
+          >
+            <X size={14} />
+          </button>
+          <div className="pointer-events-none absolute -bottom-2 right-16 h-4 w-4 rotate-45 border-b border-r border-white/70 bg-white/95" />
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
