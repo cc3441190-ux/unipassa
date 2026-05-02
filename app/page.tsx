@@ -441,6 +441,82 @@ type FeedCommentItem = {
   createdAt: string;
 };
 
+/** 详情页与列表「评论数」对齐：补足本地尚未拉取到的占位讨论（不写库，仅占位展示） */
+const COLD_COMMENT_AUTHORS = [
+  '路过工友',
+  '同公司萌新',
+  '楼下干饭侠',
+  '茶水间卧底',
+  '实习生 A',
+  '匿名 PCG',
+  '隔壁组同学',
+  '通勤踩点王',
+];
+
+const COLD_COMMENT_AVATARS = ['🙂', '😺', '🍱', '☕', '🧭', '🪴', '🧃', '🐧', '📝', '🌿'];
+
+const COLD_COMMENT_LINES = [
+  '同路况，感谢你探路 ✊',
+  '码住，午间我就去试一下错峰～',
+  '太真实了，我们这边窗口也常排队😂',
+  '同公司飘过，深有感触 +1',
+  '这个情报救大命，差点白排十分钟',
+  '补充：可以试试提前 10 分钟下单外带。',
+  '已分享给饭搭群，大家都说有用。',
+  '弱弱问一句，附近有安静写文档的角落吗？',
+  '同求，周报日的救命消息。',
+  '周末也在附近的话可约咖啡哈哈',
+  '我们组也在吐槽会议室空调，懂你。',
+  '+1，轻食那条我也踩过。',
+  '收藏了！下次带新人直接甩这条。',
+  '同公司拼车群有没有人顺路 xxx？（小声）',
+  '感谢分享，避雷成功 🙏',
+  '信息量好高，辛苦了～',
+];
+
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function buildColdStartComments(feed: AppFeedRow, fillCount: number): FeedCommentItem[] {
+  if (fillCount <= 0) return [];
+  const rand = mulberry32(Math.abs(feed.id) * 10007 + feed.content.length);
+  const tagHint = (feed.tags ?? []).find(Boolean)?.slice(0, 8) ?? '情报';
+  const baseTs = feed.createdAt ? Date.parse(feed.createdAt) : Date.now();
+  const out: FeedCommentItem[] = [];
+  for (let i = 0; i < fillCount; i++) {
+    const tmpl = COLD_COMMENT_LINES[i % COLD_COMMENT_LINES.length] ?? '谢谢分享，很实用～';
+    const line =
+      rand() > 0.65 ? `【${feed.location}｜${tagHint}】${tmpl}` : tmpl + (rand() > 0.5 ? '' : '');
+    out.push({
+      id: `seed-${feed.id}-${i}`,
+      avatar: COLD_COMMENT_AVATARS[Math.floor(rand() * COLD_COMMENT_AVATARS.length)],
+      author: COLD_COMMENT_AUTHORS[(i + Math.abs(feed.id)) % COLD_COMMENT_AUTHORS.length],
+      content: line,
+      createdAt: new Date(baseTs + (i + 1) * 333000).toISOString(),
+    });
+  }
+  return out;
+}
+
+/** 详情展示：先有用户在本机发表的，再按需拼冷启动，条数对齐卡片的 comments（上限以免过长） */
+function mergeFeedCommentsForDetail(
+  feed: AppFeedRow | undefined,
+  stored: FeedCommentItem[] | undefined
+): FeedCommentItem[] {
+  if (!feed) return [];
+  const userPart = [...(stored ?? [])];
+  const target = Math.min(Math.max(feed.comments ?? 0, userPart.length), 28);
+  return [...userPart, ...buildColdStartComments(feed, Math.max(0, target - userPart.length))];
+}
+
 function normalizeTag(tag: string): string {
   return tag.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
 }
@@ -765,8 +841,34 @@ const Onboarding = ({ onComplete }) => {
   const [imageFailedCircle, setImageFailedCircle] = useState(false);
   const [imageFailedBreakIce, setImageFailedBreakIce] = useState(false);
   const [imageFailedAssistant, setImageFailedAssistant] = useState(false);
+  /** 大图 steps 1–4：主视觉解码晚于文字，等图 load/缓存命中后再淡出底部文案，避免「字先闪现」 */
+  const [guideHeroReady, setGuideHeroReady] = useState(true);
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    ['/splash-ip-cloud.png', '/dazi-guide.png', '/quanzi-guide.png', '/pobing-guide.png', '/ai-assistant-guide.png', '/onboarding-ip.png'].forEach((src) => {
+      const im = new window.Image();
+      im.fetchPriority = 'high';
+      im.src = src;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (step >= 1 && step <= 4) setGuideHeroReady(false);
+    else setGuideHeroReady(true);
+  }, [step]);
+
+  useEffect(() => {
+    if (step < 1 || step > 4) return;
+    const id = window.setTimeout(() => setGuideHeroReady(true), 4500);
+    return () => window.clearTimeout(id);
+  }, [step]);
+
+  const bindGuideHeroImg = (el) => {
+    if (el?.complete && el.naturalWidth > 0) setGuideHeroReady(true);
+  };
 
   useEffect(() => {
     // 第 1 屏是品牌 Splash，不自动跳转；其余引导屏自动轮播
@@ -1060,8 +1162,14 @@ const Onboarding = ({ onComplete }) => {
                   <img
                     src="/dazi-guide.png"
                     alt="搭子引导图"
+                    ref={bindGuideHeroImg}
+                    loading="eager"
+                    decoding="sync"
+                    fetchPriority="high"
                     className={`w-full h-full object-cover transition-opacity duration-300 ${imageFailed ? 'opacity-0' : 'opacity-100'}`}
+                    onLoad={() => setGuideHeroReady(true)}
                     onError={(e) => {
+                      setGuideHeroReady(true);
                       setImageFailed(true);
                       e.currentTarget.src = '/onboarding-ip.png';
                     }}
@@ -1088,7 +1196,9 @@ const Onboarding = ({ onComplete }) => {
                     </div>
                   )}
                 </div>
-                <div className="absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center">
+                <div
+                  className={`absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center transition-all duration-[420ms] ease-out ${guideHeroReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'}`}
+                >
                   <h2 className={`${onboardingTitleBase} mb-4 pointer-events-none`}>
                     搭子，
                     <br />
@@ -1121,8 +1231,16 @@ const Onboarding = ({ onComplete }) => {
                   <img
                     src="/quanzi-guide.png"
                     alt="圈子情报背景"
+                    ref={bindGuideHeroImg}
+                    loading="eager"
+                    decoding="sync"
+                    fetchPriority="high"
                     className={`w-full h-full object-cover transition-opacity duration-300 ${imageFailedCircle ? 'opacity-0' : 'opacity-100'}`}
-                    onError={() => setImageFailedCircle(true)}
+                    onLoad={() => setGuideHeroReady(true)}
+                    onError={() => {
+                      setGuideHeroReady(true);
+                      setImageFailedCircle(true);
+                    }}
                   />
 
                   {imageFailedCircle && (
@@ -1149,7 +1267,9 @@ const Onboarding = ({ onComplete }) => {
                   )}
                 </div>
 
-                <div className="absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center">
+                <div
+                  className={`absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center transition-all duration-[420ms] ease-out ${guideHeroReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'}`}
+                >
                   <h2 className={`${onboardingTitleBase} mb-4 pointer-events-none`}>
                     圈子情报，实时开刷
                   </h2>
@@ -1177,8 +1297,16 @@ const Onboarding = ({ onComplete }) => {
                   <img
                     src="/pobing-guide.png"
                     alt="破冰话术背景"
+                    ref={bindGuideHeroImg}
+                    loading="eager"
+                    decoding="sync"
+                    fetchPriority="high"
                     className={`w-full h-full object-cover transition-opacity duration-300 ${imageFailedBreakIce ? 'opacity-0' : 'opacity-100'}`}
-                    onError={() => setImageFailedBreakIce(true)}
+                    onLoad={() => setGuideHeroReady(true)}
+                    onError={() => {
+                      setGuideHeroReady(true);
+                      setImageFailedBreakIce(true);
+                    }}
                   />
 
                   {imageFailedBreakIce && (
@@ -1205,7 +1333,9 @@ const Onboarding = ({ onComplete }) => {
                   )}
                 </div>
 
-                <div className="absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center">
+                <div
+                  className={`absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center transition-all duration-[420ms] ease-out ${guideHeroReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'}`}
+                >
                   <h2 className={`${onboardingTitleBase} mb-4 text-center pointer-events-none`}>
                     不会开场？ <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#e19a79] to-[#a47db6]">AI</span>替你说
                   </h2>
@@ -1233,8 +1363,16 @@ const Onboarding = ({ onComplete }) => {
                   <img
                     src="/ai-assistant-guide.png"
                     alt="职场AI助手背景"
+                    ref={bindGuideHeroImg}
+                    loading="eager"
+                    decoding="sync"
+                    fetchPriority="high"
                     className={`w-full h-full object-cover transition-opacity duration-300 ${imageFailedAssistant ? 'opacity-0' : 'opacity-100'}`}
-                    onError={() => setImageFailedAssistant(true)}
+                    onLoad={() => setGuideHeroReady(true)}
+                    onError={() => {
+                      setGuideHeroReady(true);
+                      setImageFailedAssistant(true);
+                    }}
                   />
 
                   {imageFailedAssistant && (
@@ -1261,7 +1399,9 @@ const Onboarding = ({ onComplete }) => {
                   )}
                 </div>
 
-                <div className="absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center">
+                <div
+                  className={`absolute inset-x-0 bottom-0 z-10 px-6 pb-14 w-full flex flex-col items-center transition-all duration-[420ms] ease-out ${guideHeroReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'}`}
+                >
                   <h2 className={`${onboardingTitleBase} mb-4 text-center z-20 pointer-events-none`}>
                     <span className="relative inline-block z-10">
                       职场消息
@@ -2551,60 +2691,146 @@ const AIChatView = ({
   );
 };
 
+const daziPmStorageKey = (daziId: number) => `unipass_dazi_pm_${daziId}`;
+const DAZI_PM_WELCOME = '谢谢你的情报！太及时了，差点就去排队了。';
+
 // --- ✨ 私聊对话页 (Private Chat View) ---
-const PrivateChatView = ({ dazi, onClose }) => {
+const PrivateChatView = ({
+  dazi,
+  onClose,
+}: {
+  dazi: { id: number; avatar: string; name: string; count: number; tag: string };
+  onClose: () => void;
+}) => {
+  const [msgs, setMsgs] = useState<{ me: boolean; text: string; id: string }[]>([]);
+  const [input, setInput] = useState('');
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(daziPmStorageKey(dazi.id)) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as { me?: boolean; text?: string; id?: string }[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const rows = parsed.map((row, i) => ({
+            me: Boolean(row?.me),
+            text: typeof row?.text === 'string' ? row.text : '',
+            id: typeof row?.id === 'string' ? row.id : `m-${i}`,
+          }));
+          const valid = rows.filter((r) => r.text);
+          setMsgs(valid.length > 0 ? valid : [{ me: false, text: DAZI_PM_WELCOME, id: 'welcome' }]);
+          return;
+        }
+      }
+    } catch {
+      /* fallback below */
+    }
+    setMsgs([{ me: false, text: DAZI_PM_WELCOME, id: 'welcome' }]);
+  }, [dazi.id]);
+
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [msgs]);
+
+  useEffect(() => {
+    try {
+      if (msgs.length > 0) localStorage.setItem(daziPmStorageKey(dazi.id), JSON.stringify(msgs));
+    } catch {
+      /* ignore */
+    }
+  }, [dazi.id, msgs]);
+
+  const send = () => {
+    const t = input.trim();
+    if (!t) return;
+    const id =
+      `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    setMsgs((prev) => [...prev, { me: true, text: t, id }]);
+    setInput('');
+    track('dazi_pm_send', { dazi_id: dazi.id });
+  };
+
   return (
-    <div className={`absolute inset-0 z-[1100] flex flex-col overflow-hidden rounded-[55px] ${HOME_SURFACE.background} animate-in fade-in slide-in-from-bottom-8 duration-300`}>
+    <div
+      className={`absolute inset-0 z-[1100] flex flex-col overflow-hidden rounded-[55px] ${HOME_SURFACE.background}`}
+    >
       <div className="pointer-events-none absolute -left-24 top-8 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(150,225,206,0.24)_0%,rgba(150,225,206,0)_72%)]" />
       <div className="pointer-events-none absolute -right-24 top-28 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(178,176,245,0.24)_0%,rgba(178,176,245,0)_72%)]" />
-      <div className="relative z-10 flex items-center justify-between border-b border-white/45 bg-white/35 px-6 pb-4 pt-16 shadow-[0_12px_26px_-24px_rgba(64,100,120,0.35)] backdrop-blur-2xl shrink-0">
-        <button onClick={onClose} className="rounded-full border border-white/70 bg-white/62 p-2 text-[#56756D]/70 shadow-[0_8px_18px_-16px_rgba(64,100,120,0.45)] backdrop-blur-md hover:text-[#56756D] active:scale-90 transition-all">
+      <div className="relative z-10 flex shrink-0 items-center justify-between border-b border-white/45 bg-white/35 px-6 pb-4 pt-16 shadow-[0_12px_26px_-24px_rgba(64,100,120,0.35)] backdrop-blur-2xl">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full border border-white/70 bg-white/62 p-2 text-[#56756D]/70 shadow-[0_8px_18px_-16px_rgba(64,100,120,0.45)] backdrop-blur-md hover:text-[#56756D] active:scale-90 transition-all"
+        >
           <ArrowLeft size={20} />
         </button>
         <div className="flex flex-col items-center">
-          <h2 className="text-[16px] font-black text-[#2F3E46] flex items-center gap-1.5">
-            <AvatarVisual avatar={dazi.avatar} className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full text-[16px]" /> {dazi.name}
+          <h2 className="flex items-center gap-1.5 text-[16px] font-black text-[#2F3E46]">
+            <AvatarVisual avatar={dazi.avatar} className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full text-[16px]" />{' '}
+            {dazi.name}
           </h2>
-          <span className="text-[9px] font-black text-[#B4873C] bg-white/50 border border-white/70 px-2 py-0.5 rounded-full mt-0.5 tracking-wider backdrop-blur-md">
+          <span className="mt-0.5 rounded-full border border-white/70 bg-white/50 px-2 py-0.5 text-[9px] font-black tracking-wider text-[#B4873C] backdrop-blur-md">
             ✨ {dazi.tag}
           </span>
         </div>
-        <div className="w-8"></div>
+        <div className="w-8" />
       </div>
 
-      <div className="relative z-10 flex-1 overflow-y-auto p-6 flex flex-col gap-4 no-scrollbar">
+      <div ref={scrollRef} className="relative z-10 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6 no-scrollbar">
         <div className="mx-auto rounded-full border border-white/70 bg-white/58 px-4 py-1.5 text-[10px] font-bold text-[#56756D]/55 shadow-[0_8px_18px_-16px_rgba(64,100,120,0.45)] backdrop-blur-xl">
           你们已经一起干饭 {dazi.count} 次啦
         </div>
-        
-        {/* Mock Message from Dazi */}
-        <div className="flex gap-3 mt-4">
-          <div className="w-10 h-10 overflow-hidden rounded-[16px] bg-white/62 flex items-center justify-center text-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_8px_16px_-14px_rgba(64,100,120,0.45)] border border-white/70 backdrop-blur-md shrink-0">
-            <AvatarVisual avatar={dazi.avatar} className="flex h-full w-full items-center justify-center" />
+        {msgs.map((m) => (
+          <div key={m.id} className={`flex gap-3 ${m.me ? 'flex-row-reverse' : ''}`}>
+            {!m.me && (
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[16px] border border-white/70 bg-white/62 text-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_8px_16px_-14px_rgba(64,100,120,0.45)] backdrop-blur-md">
+                <AvatarVisual avatar={dazi.avatar} className="flex h-full w-full items-center justify-center" />
+              </div>
+            )}
+            <div
+              className={`max-w-[78%] rounded-[20px] border border-white/70 p-4 shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)] backdrop-blur-xl ${
+                m.me
+                  ? 'rounded-tr-sm bg-[linear-gradient(125deg,rgba(150,225,206,0.98)_0%,rgba(176,204,248,0.96)_100%)] text-white'
+                  : 'rounded-tl-sm bg-white/72 text-[#40515A]'
+              }`}
+            >
+              <p className="text-[14px] font-medium leading-relaxed">{m.text}</p>
+            </div>
           </div>
-          <div className="bg-white/72 p-4 rounded-[20px] rounded-tl-sm border border-white/70 shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)] backdrop-blur-xl max-w-[75%]">
-            <p className="text-[14px] font-medium text-[#40515A] leading-relaxed">谢谢你的情报！太及时了，差点就去排队了。</p>
-          </div>
-        </div>
-
+        ))}
       </div>
 
       {/* AI Prompt Bubble & Input */}
-      <div className="relative z-10 border-t border-white/55 bg-white/72 p-4 pb-8 shadow-[0_-18px_38px_-26px_rgba(64,100,120,0.45)] backdrop-blur-3xl shrink-0">
-        <div className="absolute -top-12 left-0 right-0 flex justify-center animate-bounce">
-          <div className="bg-[linear-gradient(125deg,rgba(47,62,70,0.94)_0%,rgba(74,91,103,0.9)_48%,rgba(112,122,168,0.88)_100%)] text-white px-4 py-2 rounded-t-2xl rounded-bl-2xl rounded-br-sm shadow-[0_14px_28px_-18px_rgba(47,62,70,0.55)] flex items-center gap-1.5 text-[11px] font-black relative">
-            <Sparkles size={12} className="text-[#FFE68A]" /> 
-            Ta 也是 PCG 实习生，可以聊聊组内氛围哦
-            <div className="absolute -bottom-1.5 right-4 w-3 h-3 bg-[#4A5B67] rotate-45"></div>
+      <div className="relative z-10 shrink-0 border-t border-white/55 bg-white/72 p-4 pb-8 shadow-[0_-18px_38px_-26px_rgba(64,100,120,0.45)] backdrop-blur-3xl">
+        {/* pointer-events-none：避免盖住输入区的点击 */}
+        <div className="pointer-events-none absolute -top-12 left-0 right-0 flex justify-center animate-bounce">
+          <div className="relative flex items-center gap-1.5 rounded-t-2xl rounded-br-sm rounded-bl-2xl bg-[linear-gradient(125deg,rgba(47,62,70,0.94)_0%,rgba(74,91,103,0.9)_48%,rgba(112,122,168,0.88)_100%)] px-4 py-2 text-[11px] font-black text-white shadow-[0_14px_28px_-18px_rgba(47,62,70,0.55)]">
+            <Sparkles size={12} className="text-[#FFE68A]" /> Ta 也是 PCG 实习生，可以聊聊组内氛围哦
+            <div className="absolute -bottom-1.5 right-4 h-3 w-3 rotate-45 bg-[#4A5B67]" />
           </div>
         </div>
         <div className="flex items-center rounded-[24px] border border-white/70 bg-white/60 p-1.5 shadow-[inset_0_1px_8px_rgba(64,100,120,0.06)] backdrop-blur-xl">
-          <input 
-            type="text" 
-            placeholder="给搭子发消息..." 
-            className="flex-1 bg-transparent border-none focus:outline-none text-[13px] font-medium px-3 text-[#40515A] placeholder:text-[#56756D]/35"
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') send();
+            }}
+            placeholder="给搭子发消息..."
+            className="flex-1 border-none bg-transparent px-3 text-[13px] font-medium text-[#40515A] placeholder:text-[#56756D]/35 focus:outline-none"
           />
-          <button className="w-10 h-10 rounded-[18px] bg-[linear-gradient(125deg,rgba(255,231,171,0.95)_0%,rgba(150,225,206,0.9)_100%)] text-[#2F3E46] flex items-center justify-center shadow-[0_8px_18px_-14px_rgba(64,100,120,0.45)] active:scale-95 transition-transform">
+          <button
+            type="button"
+            disabled={!input.trim()}
+            onClick={send}
+            className={`flex h-10 w-10 items-center justify-center rounded-[18px] shadow-[0_8px_18px_-14px_rgba(64,100,120,0.45)] transition-transform active:scale-95 ${
+              input.trim()
+                ? 'bg-[linear-gradient(125deg,rgba(255,231,171,0.95)_0%,rgba(150,225,206,0.9)_100%)] text-[#2F3E46]'
+                : 'cursor-not-allowed bg-white/50 text-[#56756D]/30'
+            }`}
+          >
             <Send size={16} className="ml-0.5" />
           </button>
         </div>
@@ -2906,7 +3132,9 @@ const DetailView = ({
   const showWaitHero = !icebreakDone && inputMode === 'ai' && thread.length === 0;
 
   return (
-    <div className={`absolute inset-0 z-[1100] flex flex-col overflow-hidden rounded-[55px] ${HOME_SURFACE.background} animate-in fade-in slide-in-from-bottom-8 duration-300`}>
+    <div
+      className={`absolute inset-0 z-[1100] flex flex-col overflow-hidden rounded-[55px] ${HOME_SURFACE.background}`}
+    >
       <div className="pointer-events-none absolute -left-20 top-10 h-48 w-48 rounded-full bg-[radial-gradient(circle,rgba(150,225,206,0.28)_0%,rgba(150,225,206,0)_72%)]" />
       <div className="pointer-events-none absolute -right-20 top-24 h-48 w-48 rounded-full bg-[radial-gradient(circle,rgba(178,176,245,0.26)_0%,rgba(178,176,245,0)_72%)]" />
       <div className="relative z-10 flex items-center justify-between border-b border-white/45 bg-white/35 px-6 pb-4 pt-16 shadow-[0_12px_26px_-24px_rgba(64,100,120,0.35)] backdrop-blur-2xl">
@@ -3006,9 +3234,11 @@ const DetailView = ({
             </div>
           </div>
         ) : (
-          <div className="relative z-10 animate-in slide-in-from-bottom-12 fade-in duration-500 border-t border-white/55 bg-white/72 p-4 pb-8 backdrop-blur-3xl shadow-[0_-18px_38px_-26px_rgba(64,100,120,0.45)]">
+          <div className="relative z-10 border-t border-white/55 bg-white/72 p-4 pb-8 backdrop-blur-3xl shadow-[0_-18px_38px_-26px_rgba(64,100,120,0.45)]">
             {showSuggestion && (
-              <div className={`absolute bottom-[calc(100%+16px)] left-4 right-4 z-20 animate-in zoom-in-95 duration-300 rounded-[24px] ${HOME_SURFACE.glassCard} p-5`}>
+              <div
+                className={`absolute bottom-[calc(100%+16px)] left-4 right-4 z-20 rounded-[24px] ${HOME_SURFACE.glassCard} p-5 shadow-[0_12px_40px_-20px_rgba(64,100,120,0.35)]`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <span className="mb-1.5 flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#6EAFA0]">
@@ -7660,9 +7890,6 @@ const App = () => {
               {showAnonymousProfile && (
                 <AnonymousProfileModal user={showAnonymousProfile} onClose={() => setShowAnonymousProfile(null)} />
               )}
-              {showPrivateChat && (
-                <PrivateChatView dazi={showPrivateChat} onClose={() => setShowPrivateChat(null)} />
-              )}
               {showAIChat && (
                 <AIChatView
                   userProfile={userProfile}
@@ -7725,7 +7952,14 @@ const App = () => {
               {showFeedDetailId && (
                 <FeedDetailModal
                   feed={feedsMergedForUi.find(f => f.id === showFeedDetailId)}
-                  comments={showFeedDetailId ? (feedCommentsMap[showFeedDetailId] ?? []) : []}
+                  comments={
+                    showFeedDetailId
+                      ? mergeFeedCommentsForDetail(
+                          feedsMergedForUi.find((f) => f.id === showFeedDetailId),
+                          feedCommentsMap[showFeedDetailId]
+                        )
+                      : []
+                  }
                   onLike={handleFeedLike}
                   onAddComment={handleFeedComment}
                   onSummonAi={handleSummonAiForFeed}
@@ -7740,16 +7974,6 @@ const App = () => {
                   isJoined={joinedIds.includes(showPreviewId) || previewModalIsHost}
                   onJoin={handleJoin}
                   onClose={() => setShowPreviewId(null)} 
-                />
-              )}
-              {showChatId !== null && (
-                <DetailView
-                  key={showChatId}
-                  id={showChatId}
-                  scene={scenesWithFallback.find(s => s.id === showChatId)}
-                  onClose={() => setShowChatId(null)}
-                  icebreakDone={sceneIcebreakDoneIds.includes(showChatId)}
-                  onFirstMessageInScene={markSceneFirstMessage}
                 />
               )}
               {showQuickBuild && (
@@ -7775,6 +7999,21 @@ const App = () => {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {appState === 'main' && showChatId !== null && (
+          <DetailView
+            key={showChatId}
+            id={showChatId}
+            scene={scenesWithFallback.find(s => s.id === showChatId)}
+            onClose={() => setShowChatId(null)}
+            icebreakDone={sceneIcebreakDoneIds.includes(showChatId)}
+            onFirstMessageInScene={markSceneFirstMessage}
+          />
+        )}
+
+        {appState === 'main' && showPrivateChat && (
+          <PrivateChatView dazi={showPrivateChat} onClose={() => setShowPrivateChat(null)} />
+        )}
 
         <div className="pointer-events-none absolute bottom-1.5 z-[100] hidden w-full justify-center md:flex">
           <div className="h-[5px] w-[130px] rounded-full bg-black/5" />
