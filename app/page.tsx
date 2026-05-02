@@ -2985,8 +2985,6 @@ const DetailView = ({
   }, [id]);
 
   useLayoutEffect(() => {
-    polishAbortRef.current?.abort();
-    polishAbortRef.current = new AbortController();
     return () => {
       polishAbortRef.current?.abort();
       polishAbortRef.current = null;
@@ -3033,8 +3031,9 @@ const DetailView = ({
     setPolishSuggestionText(null);
     setShowSuggestion(true);
     setPolishLoading(true);
-    const ac = polishAbortRef.current ?? new AbortController();
-    if (!polishAbortRef.current) polishAbortRef.current = ac;
+    polishAbortRef.current?.abort();
+    const ac = new AbortController();
+    polishAbortRef.current = ac;
     try {
       const res = await fetch('/api/eq-polish', {
         method: 'POST',
@@ -3042,11 +3041,12 @@ const DetailView = ({
         signal: ac.signal,
         body: JSON.stringify({
           text: raw,
-          /** 与同局搭子約见面用语，服务端 eq-polish 需可识别（非纯职场模版时仍按白话润色） */
+          /** 与同局搭子约见面用语，服务端 eq-polish 需可识别（非纯职场模版时仍按白话润色） */
           scenario: '搭子约见',
         }),
       });
       const data = (await res.json()) as { result?: string; error?: string };
+      if (polishAbortRef.current !== ac) return;
       const next =
         typeof data.result === 'string' && data.result.trim() ? data.result.trim() : '';
       if (!res.ok || (!next && data.error)) {
@@ -3063,7 +3063,10 @@ const DetailView = ({
       setPolishError('网络异常，已保留你的原文在下面');
       setPolishSuggestionText(raw);
     } finally {
-      setPolishLoading(false);
+      if (polishAbortRef.current === ac) {
+        polishAbortRef.current = null;
+        setPolishLoading(false);
+      }
     }
   };
 
