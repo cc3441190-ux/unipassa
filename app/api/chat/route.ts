@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getOpenAiCompatibleApiRoot } from '@/lib/openai-base-url';
 
 export async function POST(req: NextRequest) {
   let messages: unknown, mode: unknown;
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'AI 服务未配置' }, { status: 500 });
   }
 
-  const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+  const baseUrl = getOpenAiCompatibleApiRoot();
   const model = process.env.AI_MODEL || 'deepseek-chat';
 
   // 根据 mode 调整 system prompt

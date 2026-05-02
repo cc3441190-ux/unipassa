@@ -10,7 +10,7 @@
    NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
    NEXT_PUBLIC_SUPABASE_ANON_KEY=xxx
    OPENAI_API_KEY=xxx
-   OPENAI_BASE_URL=https://api.deepseek.com/v1
+   OPENAI_BASE_URL=https://api.deepseek.com
    AI_MODEL=deepseek-chat
    ```
 

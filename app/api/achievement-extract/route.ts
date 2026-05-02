@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getOpenAiCompatibleApiRoot } from '@/lib/openai-base-url';
 
 /**
  * 从一条圈子动态中提取「职场成就胶囊」展示用的一行摘要。
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'AI 服务未配置' }, { status: 500 });
   }
 
-  const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+  const baseUrl = getOpenAiCompatibleApiRoot();
   const model = process.env.AI_MODEL || 'deepseek-chat';
 
   try {

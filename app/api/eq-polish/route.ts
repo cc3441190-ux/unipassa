@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getOpenAiCompatibleApiRoot } from '@/lib/openai-base-url';
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -37,8 +38,7 @@ export async function POST(req: NextRequest) {
       ? '你擅长把口语说清楚、友好自然，像在兴趣局里和同局的人约见面。'
       : '你是一位职场沟通专家，擅长将白话文转化为得体、高情商的职场用语。';
 
-  // 支持自定义 API Base URL（用于国内代理），在 .env.local 中设置 OPENAI_BASE_URL
-  const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+  const baseUrl = getOpenAiCompatibleApiRoot();
   const model = process.env.AI_MODEL || 'deepseek-chat';
 
   try {
@@ -68,11 +68,14 @@ export async function POST(req: NextRequest) {
     });
 
     if (!response.ok) {
-      const err = await response.json();
-      return NextResponse.json(
-        { error: err.error?.message ?? 'AI 请求失败' },
-        { status: 500 }
-      );
+      let message = `AI 请求失败（${response.status}）`;
+      try {
+        const err = await response.json();
+        if (typeof err?.error?.message === 'string') message = err.error.message;
+      } catch {
+        /* 非 JSON 响应 */
+      }
+      return NextResponse.json({ error: message }, { status: 502 });
     }
 
     const data = await response.json();

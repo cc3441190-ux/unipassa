@@ -518,7 +518,7 @@ const copyToClipboard = (text) => {
   } catch (err) {
     console.error('Fallback copy failed', err);
   }
-  document.body.removeChild(textArea);
+  textArea.remove();
 };
 
 const STORAGE_KEYS = {
@@ -2721,6 +2721,9 @@ const PreviewModal = ({ scene, onJoin, onClose, isJoined, isHost }) => {
 // --- 局详情与破冰页 (Chat Room View) —— 未首聊见 AI 开场；已发首条则直进聊天 ---
 const threadStorageKey = (sceneId: number) => `unipass_scene_thread_${sceneId}`;
 
+const newThreadMsgId = () =>
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
 const DetailView = ({
   id,
   scene: sceneProp,
@@ -2741,20 +2744,40 @@ const DetailView = ({
   const [polishSuggestionText, setPolishSuggestionText] = useState<string | null>(null);
   const [polishLoading, setPolishLoading] = useState(false);
   const [polishError, setPolishError] = useState<string | null>(null);
-  const [thread, setThread] = useState<{ me: boolean; text: string }[]>([]);
+  const [thread, setThread] = useState<{ me: boolean; text: string; id: string }[]>([]);
+  const polishAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setInputMode(icebreakDone ? 'manual' : 'ai');
   }, [icebreakDone, id]);
+
+  useLayoutEffect(() => {
+    polishAbortRef.current?.abort();
+    polishAbortRef.current = new AbortController();
+    return () => {
+      polishAbortRef.current?.abort();
+      polishAbortRef.current = null;
+    };
+  }, [id]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const raw = localStorage.getItem(threadStorageKey(id));
     if (raw) {
       try {
-        const parsed = JSON.parse(raw) as { me: boolean; text: string }[];
-        if (Array.isArray(parsed)) setThread(parsed);
-        else setThread([]);
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          setThread(
+            parsed.map((row, i) => {
+              const r = row as { me?: unknown; text?: unknown; id?: unknown };
+              return {
+                me: Boolean(r?.me),
+                text: typeof r?.text === 'string' ? r.text : String(r?.text ?? ''),
+                id: typeof r?.id === 'string' && r.id ? r.id : `legacy-${id}-${i}`,
+              };
+            })
+          );
+        } else setThread([]);
       } catch {
         setThread([]);
       }
@@ -2763,7 +2786,7 @@ const DetailView = ({
     }
   }, [id]);
 
-  const persistThread = (rows: { me: boolean; text: string }[]) => {
+  const persistThread = (rows: { me: boolean; text: string; id: string }[]) => {
     setThread(rows);
     try {
       localStorage.setItem(threadStorageKey(id), JSON.stringify(rows));
@@ -2777,10 +2800,13 @@ const DetailView = ({
     setPolishSuggestionText(null);
     setShowSuggestion(true);
     setPolishLoading(true);
+    const ac = polishAbortRef.current ?? new AbortController();
+    if (!polishAbortRef.current) polishAbortRef.current = ac;
     try {
       const res = await fetch('/api/eq-polish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: ac.signal,
         body: JSON.stringify({
           text: raw,
           /** 与同局搭子約见面用语，服务端 eq-polish 需可识别（非纯职场模版时仍按白话润色） */
@@ -2798,11 +2824,13 @@ const DetailView = ({
       } else {
         setPolishSuggestionText(raw);
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if ((err as { name?: string })?.name === 'AbortError') return;
       setPolishError('网络异常，已保留你的原文在下面');
       setPolishSuggestionText(raw);
     } finally {
-      setPolishLoading(false);
+      if (!ac.signal.aborted) setPolishLoading(false);
     }
   };
 
@@ -2817,13 +2845,13 @@ const DetailView = ({
     const t = messageText.trim();
     if (!t) return;
     onFirstMessageInScene(id);
-    persistThread([...thread, { me: true, text: t }]);
+    persistThread([...thread, { me: true, text: t, id: newThreadMsgId() }]);
     setMessageText('');
   };
 
   const pickOpeningLine = (text: string) => {
     onFirstMessageInScene(id);
-    persistThread([...thread, { me: true, text }]);
+    persistThread([...thread, { me: true, text, id: newThreadMsgId() }]);
     setInputMode('manual');
   };
 
@@ -2901,8 +2929,8 @@ const DetailView = ({
 
         {thread.length > 0 && (
           <div className="mt-5 flex w-full flex-col gap-2.5">
-            {thread.map((m, i) => (
-              <div key={i} className={`flex w-full ${m.me ? 'justify-end' : 'justify-start'}`}>
+            {thread.map((m) => (
+              <div key={m.id} className={`flex w-full ${m.me ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={`max-w-[85%] rounded-[20px] px-4 py-2.5 text-[13px] font-bold leading-relaxed ${
                     m.me ? 'bg-[linear-gradient(125deg,rgba(150,225,206,0.98)_0%,rgba(176,204,248,0.96)_100%)] text-white shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)]' : 'bg-white/75 text-slate-800 border border-white/70 backdrop-blur-md'
@@ -7716,6 +7744,7 @@ const App = () => {
               )}
               {showChatId !== null && (
                 <DetailView
+                  key={showChatId}
                   id={showChatId}
                   scene={scenesWithFallback.find(s => s.id === showChatId)}
                   onClose={() => setShowChatId(null)}
