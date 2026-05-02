@@ -2977,6 +2977,13 @@ const DetailView = ({
     setInputMode(icebreakDone ? 'manual' : 'ai');
   }, [icebreakDone, id]);
 
+  useEffect(() => {
+    setPolishSuggestionText(null);
+    setPolishError(null);
+    setShowSuggestion(false);
+    setPolishLoading(false);
+  }, [id]);
+
   useLayoutEffect(() => {
     polishAbortRef.current?.abort();
     polishAbortRef.current = new AbortController();
@@ -3056,7 +3063,7 @@ const DetailView = ({
       setPolishError('网络异常，已保留你的原文在下面');
       setPolishSuggestionText(raw);
     } finally {
-      if (!ac.signal.aborted) setPolishLoading(false);
+      setPolishLoading(false);
     }
   };
 
