@@ -25,11 +25,17 @@ export async function POST(req: NextRequest) {
     工作汇报: '向上级汇报工作进展',
     '道歉/甩锅': '在职场中优雅地道歉或解释情况',
     请假说明: '向领导请假并说明原因',
+    搭子约见: '与同局搭子约定见面地点或时间，语气自然友好，不要官僚或公文腔',
   };
 
   const scenarioHint = scenario && scenarioMap[scenario]
     ? `场景：${scenarioMap[scenario]}。`
     : '';
+
+  const systemRole =
+    scenario === '搭子约见'
+      ? '你擅长把口语说清楚、友好自然，像在兴趣局里和同局的人约见面。'
+      : '你是一位职场沟通专家，擅长将白话文转化为得体、高情商的职场用语。';
 
   // 支持自定义 API Base URL（用于国内代理），在 .env.local 中设置 OPENAI_BASE_URL
   const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
@@ -47,8 +53,8 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: 'system',
-            content: `你是一位职场沟通专家，擅长将白话文转化为得体、高情商的职场用语。${scenarioHint}
-请将用户的大白话改写成一段简短、得体、自然的职场消息（中文），不超过80字。
+            content: `${systemRole}${scenarioHint}
+请将用户的大白话改写成一段简短、得体、自然的中文消息，不超过80字。
 只输出改写后的内容，不要任何解释或前缀。`,
           },
           {

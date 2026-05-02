@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import confetti from 'canvas-confetti';
 import { track } from '@/lib/analytics';
 import { supabase, type AppGuestDataRow, type DaziItem } from '@/lib/supabase';
@@ -2737,6 +2738,9 @@ const DetailView = ({
   const [inputMode, setInputMode] = useState<'ai' | 'manual'>(() => (icebreakDone ? 'manual' : 'ai'));
   const [messageText, setMessageText] = useState('');
   const [showSuggestion, setShowSuggestion] = useState(false);
+  const [polishSuggestionText, setPolishSuggestionText] = useState<string | null>(null);
+  const [polishLoading, setPolishLoading] = useState(false);
+  const [polishError, setPolishError] = useState<string | null>(null);
   const [thread, setThread] = useState<{ me: boolean; text: string }[]>([]);
 
   useEffect(() => {
@@ -2766,15 +2770,47 @@ const DetailView = ({
     } catch { /*  */ }
   };
 
-  const handlePolish = () => {
-    if (messageText.trim().length > 0 || messageText === '') {
-      setShowSuggestion(true);
+  const handlePolish = async () => {
+    const raw = messageText.trim();
+    if (!raw) return;
+    setPolishError(null);
+    setPolishSuggestionText(null);
+    setShowSuggestion(true);
+    setPolishLoading(true);
+    try {
+      const res = await fetch('/api/eq-polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: raw,
+          /** 与同局搭子約见面用语，服务端 eq-polish 需可识别（非纯职场模版时仍按白话润色） */
+          scenario: '搭子约见',
+        }),
+      });
+      const data = (await res.json()) as { result?: string; error?: string };
+      const next =
+        typeof data.result === 'string' && data.result.trim() ? data.result.trim() : '';
+      if (!res.ok || (!next && data.error)) {
+        setPolishError(typeof data.error === 'string' ? data.error : '润色失败，可先直接发送原文');
+        setPolishSuggestionText(raw);
+      } else if (next) {
+        setPolishSuggestionText(next);
+      } else {
+        setPolishSuggestionText(raw);
+      }
+    } catch {
+      setPolishError('网络异常，已保留你的原文在下面');
+      setPolishSuggestionText(raw);
+    } finally {
+      setPolishLoading(false);
     }
   };
 
   const handleAdopt = () => {
-    setMessageText('今天工作有点心累，急需一顿快餐回血！等我！🏃');
+    if (polishSuggestionText?.trim()) setMessageText(polishSuggestionText.trim());
     setShowSuggestion(false);
+    setPolishSuggestionText(null);
+    setPolishError(null);
   };
 
   const sendManualMessage = () => {
@@ -2946,21 +2982,42 @@ const DetailView = ({
             {showSuggestion && (
               <div className={`absolute bottom-[calc(100%+16px)] left-4 right-4 z-20 animate-in zoom-in-95 duration-300 rounded-[24px] ${HOME_SURFACE.glassCard} p-5`}>
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <span className="mb-1.5 flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#6EAFA0]">
                       <Sparkles size={12} /> AI 润色建议
                     </span>
-                    <p className="text-[14px] font-bold leading-snug text-slate-800">今天工作有点心累，急需一顿快餐回血！等我！🏃</p>
+                    {polishError && (
+                      <p className="mb-2 text-[11px] font-bold text-amber-700">{polishError}</p>
+                    )}
+                    {polishLoading ? (
+                      <p className="flex items-center gap-2 text-[13px] font-bold text-slate-500">
+                        <Loader2 size={14} className="animate-spin shrink-0" />
+                        正在根据你输入的内容润色…
+                      </p>
+                    ) : (
+                      <p className="text-[14px] font-bold leading-snug text-slate-800 break-words">
+                        {polishSuggestionText ?? '—'}
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
                     onClick={handleAdopt}
-                    className="mt-1 flex shrink-0 items-center gap-1.5 rounded-xl bg-[linear-gradient(125deg,rgba(150,225,206,0.98)_0%,rgba(176,204,248,0.96)_100%)] px-3.5 py-2.5 text-xs font-black text-white shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)] transition-transform active:scale-95"
+                    disabled={polishLoading || !polishSuggestionText?.trim()}
+                    className="mt-1 flex shrink-0 items-center gap-1.5 rounded-xl bg-[linear-gradient(125deg,rgba(150,225,206,0.98)_0%,rgba(176,204,248,0.96)_100%)] px-3.5 py-2.5 text-xs font-black text-white shadow-[0_10px_22px_-18px_rgba(64,100,120,0.45)] transition-transform active:scale-95 disabled:pointer-events-none disabled:opacity-40"
                   >
                     <CheckCircle2 size={14} /> 采用
                   </button>
                 </div>
-                <button type="button" onClick={() => setShowSuggestion(false)} className="absolute right-3 top-3 text-slate-300 hover:text-slate-500">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSuggestion(false);
+                    setPolishSuggestionText(null);
+                    setPolishError(null);
+                  }}
+                  className="absolute right-3 top-3 text-slate-300 hover:text-slate-500"
+                >
                   <X size={14} />
                 </button>
                 <div className="absolute -bottom-2 right-16 h-4 w-4 rotate-45 border-b border-r border-white/70 bg-white/72"></div>
@@ -4903,11 +4960,43 @@ const UserProfile = ({
   onOpenStudentVerify: () => void;
 }) => {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+  /** 挂载到 document.body：避免外层手机壳 overflow-hidden 裁切下拉菜单，出现「只剩午饭搭子一条」的假 bug */
+  const [daziTagMenuFixed, setDaziTagMenuFixed] = useState<{ top: number; left: number } | null>(null);
+  const daziTagMenuAnchorRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const [pendingRemoveDaziId, setPendingRemoveDaziId] = useState<number | null>(null);
   const formalDaziCount = dazis.filter((d) => d.status === 'dazi' || !d.status).length;
   const profileLevel = Math.min(99, Math.max(1, 1 + achievements.length + Math.floor(formalDaziCount / 2)));
   const levelRankLabel =
     profileLevel <= 2 ? '职场萌新' : profileLevel <= 5 ? '职场新星' : profileLevel <= 10 ? '成长中坚' : '高光选手';
+
+  const DAZI_TAG_OPTIONS = ['午饭搭子', '周末搭子', '随机局好友', '摸鱼队友', '跨部门吐槽搭子'] as const;
+
+  useLayoutEffect(() => {
+    if (openMenuId === null) {
+      setDaziTagMenuFixed(null);
+      return;
+    }
+    const el = daziTagMenuAnchorRefs.current.get(openMenuId);
+    if (!el) {
+      setDaziTagMenuFixed(null);
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    const menuMinW = 168;
+    const left = Math.max(10, Math.min(r.left, window.innerWidth - menuMinW - 10));
+    setDaziTagMenuFixed({ top: r.bottom + 6, left });
+  }, [openMenuId]);
+
+  useEffect(() => {
+    if (openMenuId === null) return;
+    const close = () => setOpenMenuId(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [openMenuId]);
 
   const pendingRemoveDazi =
     pendingRemoveDaziId === null ? null : dazis.find((d) => d.id === pendingRemoveDaziId) ?? null;
@@ -5131,6 +5220,10 @@ const UserProfile = ({
                         {isCandidate ? (
                           <button
                             type="button"
+                            ref={(node) => {
+                              if (node) daziTagMenuAnchorRefs.current.set(dazi.id, node);
+                              else daziTagMenuAnchorRefs.current.delete(dazi.id);
+                            }}
                             onClick={() => setOpenMenuId(openMenuId === dazi.id ? null : dazi.id)}
                             className="flex items-center gap-0.5 rounded-full bg-[#6ECEB8] px-2.5 py-0.5 text-[10px] font-bold text-white shadow-sm transition active:scale-95"
                           >
@@ -5143,6 +5236,10 @@ const UserProfile = ({
                             </span>
                             <button
                               type="button"
+                              ref={(node) => {
+                                if (node) daziTagMenuAnchorRefs.current.set(dazi.id, node);
+                                else daziTagMenuAnchorRefs.current.delete(dazi.id);
+                              }}
                               onClick={() =>
                                 setOpenMenuId(openMenuId === dazi.id ? null : dazi.id)
                               }
@@ -5167,40 +5264,6 @@ const UserProfile = ({
                     />
                   </div>
                 </div>
-
-                {openMenuId === dazi.id && (
-                  <div className="absolute left-14 top-12 z-50 flex min-w-[140px] flex-col gap-0.5 rounded-[16px] border border-white/70 bg-white/95 p-1.5 shadow-[0_10px_24px_-12px_rgba(0,0,0,0.15)] backdrop-blur-md animate-in zoom-in-95 duration-200">
-                    {['午饭搭子', '周末搭子', '随机局好友', '摸鱼队友', '跨部门吐槽搭子'].map((option) => {
-                      const isSelected = dazi.tag === option;
-                      return (
-                        <button
-                          key={option}
-                          type="button"
-                          onClick={() => {
-                            onSetRole(dazi.id, option);
-                            setOpenMenuId(null);
-                          }}
-                          className={`rounded-xl px-3 py-2 text-left text-[12px] font-bold transition-colors ${
-                            isSelected ? 'bg-[#E6F4EA] text-[#2E7D32]' : 'text-slate-600 hover:bg-slate-50'
-                          }`}
-                        >
-                          {option}
-                        </button>
-                      );
-                    })}
-                    <div className="mx-2 my-0.5 h-px shrink-0 bg-slate-100" aria-hidden />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenMenuId(null);
-                        setPendingRemoveDaziId(dazi.id);
-                      }}
-                      className="rounded-xl px-3 py-2 text-left text-[12px] font-normal text-red-600 transition-colors hover:bg-red-50 active:bg-red-50/80"
-                    >
-                      取消搭子关系
-                    </button>
-                  </div>
-                )}
               </div>
             );
           })}
@@ -5261,6 +5324,62 @@ const UserProfile = ({
           </button>
         </div>
       </div>
+
+      {typeof document !== 'undefined' &&
+        openMenuId !== null &&
+        daziTagMenuFixed &&
+        (() => {
+          const menuDazi = dazis.find((d) => d.id === openMenuId);
+          if (!menuDazi) return null;
+          return createPortal(
+            <>
+              <button
+                type="button"
+                aria-label="关闭菜单"
+                className="fixed inset-0 z-[9390] cursor-default bg-transparent"
+                onClick={() => setOpenMenuId(null)}
+              />
+              <div
+                role="menu"
+                className="fixed z-[9410] flex min-w-[168px] max-h-[min(70vh,320px)] flex-col gap-0.5 overflow-y-auto rounded-[16px] border border-white/70 bg-white/95 p-1.5 shadow-[0_10px_24px_-12px_rgba(0,0,0,0.2)] backdrop-blur-md animate-in zoom-in-95 duration-200"
+                style={{ top: daziTagMenuFixed.top, left: daziTagMenuFixed.left }}
+              >
+                {DAZI_TAG_OPTIONS.map((option) => {
+                  const isSelected = menuDazi.tag === option;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        onSetRole(menuDazi.id, option);
+                        setOpenMenuId(null);
+                      }}
+                      className={`rounded-xl px-3 py-2 text-left text-[12px] font-bold transition-colors ${
+                        isSelected ? 'bg-[#E6F4EA] text-[#2E7D32]' : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  );
+                })}
+                <div className="mx-2 my-0.5 h-px shrink-0 bg-slate-100" aria-hidden />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpenMenuId(null);
+                    setPendingRemoveDaziId(menuDazi.id);
+                  }}
+                  className="rounded-xl px-3 py-2 text-left text-[12px] font-normal text-red-600 transition-colors hover:bg-red-50 active:bg-red-50/80"
+                >
+                  取消搭子关系
+                </button>
+              </div>
+            </>,
+            document.body
+          );
+        })()}
 
       {pendingRemoveDazi && (
         <RemoveDaziConfirmModal
