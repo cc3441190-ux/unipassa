@@ -28,6 +28,9 @@ export async function POST(req: NextRequest) {
     systemPrompt = '你是 UniAI 内容评估师。你的任务是给圈子内容生成一句话的 AI 摘要或建议，帮助读者快速了解内容的核心价值。你的摘要应该：1）聚焦事实而非情绪；2）直指内容对用户的实际帮助；3）用轻松幽默的口吻；4）不超过 20 字。';
   } else if (mode === 'feed-comment') {
     systemPrompt = '你是 UniAI 高情商嘴替。你的任务是根据圈子内容，生成 3 条可直接复制的高情商评论或私聊话术。要求：1）每条不超过 35 字；2）体现同理心与建设性；3）可直接复制使用；4）根据内容类型调整语气（求助用鼓励，吐槽用共鸣，推荐用感谢）。';
+  } else if (mode === 'buddy-polish') {
+    systemPrompt =
+      '你擅长和同局兴趣搭子在局里聊天。把用户想说的改写成可直接发送的中文消息：自然、友好、像在局里约时间地点或轻松破冰；不要公文腔或职场汇报腔。不超过80字。只输出改写后的内容，不要任何解释或前缀。';
   }
 
   try {
@@ -46,7 +49,7 @@ export async function POST(req: NextRequest) {
           },
           ...messages,
         ],
-        max_tokens: mode === 'feed-summary' ? 50 : 300,
+        max_tokens: mode === 'feed-summary' ? 50 : mode === 'buddy-polish' ? 200 : 300,
         temperature: 0.7,
       }),
     });

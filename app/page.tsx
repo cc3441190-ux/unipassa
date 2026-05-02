@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import confetti from 'canvas-confetti';
 import { track } from '@/lib/analytics';
 import { supabase, type AppGuestDataRow, type DaziItem } from '@/lib/supabase';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { 
   Home, 
   Users, 
@@ -1703,6 +1703,13 @@ const SetupFlow = ({
   const [showPermission, setShowPermission] = useState(false);
   /** 插画内浮层标签：首帧隐藏，延迟出现降低首屏信息密度 */
   const [mapPinsVisible, setMapPinsVisible] = useState(false);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const img = new Image();
+    img.src = '/通知.png';
+  }, []);
 
   useLayoutEffect(() => {
     if (typeof window === 'undefined' || process.env.NODE_ENV !== 'development') return;
@@ -2369,13 +2376,20 @@ const SetupFlow = ({
         )}
       </AnimatePresence>
 
-      {/* 权限开启弹窗 (Overlay) */}
+      {/* 权限开启弹窗 (Overlay)：全屏 backdrop-blur 易与 onboarding 大图层叠加掉帧；用纯色遮罩 + 仅 opacity/scale 动画更顺滑 */}
       {showPermission && (
         <div className="absolute inset-0 z-50 flex items-center justify-center px-7">
-          <div className="absolute inset-0 bg-[#2F3E46]/30 backdrop-blur-[6px] animate-in fade-in" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 20 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
+            className="absolute inset-0 bg-[#2F3E46]/42"
+            aria-hidden
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          />
+          <motion.div
+            initial={{ scale: 0.96, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
             className="relative z-10 w-[330px]"
           >
             <div className="relative">
@@ -3035,14 +3049,13 @@ const DetailView = ({
     const ac = new AbortController();
     polishAbortRef.current = ac;
     try {
-      const res = await fetch('/api/eq-polish', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: ac.signal,
         body: JSON.stringify({
-          text: raw,
-          /** 与同局搭子约见面用语，服务端 eq-polish 需可识别（非纯职场模版时仍按白话润色） */
-          scenario: '搭子约见',
+          mode: 'buddy-polish',
+          messages: [{ role: 'user', content: raw }],
         }),
       });
       const data = (await res.json()) as { result?: string; error?: string };
