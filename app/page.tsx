@@ -1524,11 +1524,11 @@ const Login = ({ onLogin }) => {
 
 // --- ✨ 3. 新增：用户初始化引导逻辑 (Setup Flow) ---
 const SETUP_AVATARS = PROFILE_AVATARS;
-// 定位失败页可调参数区：只改这里的数字/样式即可整体调整布局
+// 定位结果页（成功 / 拒绝 / 失败等共用骨架）可调参数区
 const LOCATION_FAIL_LAYOUT = {
   resultCard: 'relative mt-[4.5rem] rounded-[22px] border border-white/70 bg-white/92 px-6 pb-4 pt-[2.6rem] shadow-[0_18px_42px_-28px_rgba(0,0,0,0.28)] backdrop-blur-[10px]',
-  icon: 'pointer-events-none absolute -top-6 left-5 h-[60px] w-[60px] object-contain drop-shadow-[0_16px_20px_rgba(126,116,214,0.28)]',
-  continueTag: 'absolute right-5 top-6 border-[#CFE9D7] bg-[#E4F5E8] text-[#6BAD82]',
+  continueTag:
+    'pointer-events-none absolute right-5 top-6 z-10 rounded-[8px] border border-[#CFE9D7] bg-[#E4F5E8] px-2.5 py-1 text-[10px] font-black tracking-[0.08em] text-[#6BAD82]',
   title: 'mt-0 text-[#1F2329]',
   desc: 'text-[#7D7D7D]',
   retryBtn: 'mt-5 w-full rounded-[22px] py-3.5 text-[15px] font-black text-white transition-transform active:scale-[0.98] border border-white/45 shadow-[0_16px_28px_-14px_rgba(110,206,184,0.7)]',
@@ -1643,10 +1643,6 @@ const SetupFlow = ({
   const finishSetup = () => onComplete(profile, locationCoords ?? undefined);
   const isValidPersona = profile.nickname.trim() !== '' && profile.gender !== '' && profile.role !== '';
   const isValidCompany = profile.company.trim() !== '';
-  const showLocationFailBackdrop =
-    step === 'location' &&
-    (locationStatus === 'denied' || locationStatus === 'unavailable' || locationStatus === 'error');
-
   return (
     <div className={`absolute inset-0 z-50 bg-white overflow-hidden flex flex-col ${step !== 'locationPermission' ? 'pt-16' : ''}`}>
       <AnimatePresence mode="wait">
@@ -1860,14 +1856,14 @@ const SetupFlow = ({
             transition={{ duration: 0.4 }}
             className="absolute inset-0 flex min-h-0 flex-col overflow-hidden px-6 pt-[max(4.35rem,env(safe-area-inset-top,0px)+2rem)] pb-0"
             style={
-              showLocationFailBackdrop
-                ? {
+              locationStatus === 'loading'
+                ? { background: '#EEEADC' }
+                : {
                     backgroundImage: "url('/dingweishibai.png')",
                     backgroundSize: 'cover',
                     backgroundPosition: 'center',
                     backgroundRepeat: 'no-repeat',
                   }
-                : { background: '#EEEADC' }
             }
           >
             <button
@@ -1882,14 +1878,14 @@ const SetupFlow = ({
             >
               <ArrowLeft size={17} strokeWidth={2.7} className="block shrink-0" aria-hidden />
             </button>
-            {!showLocationFailBackdrop && (
-            <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-              <div
-                className="absolute left-[-23px] top-[-84px] h-[981px] w-[502px]"
-                style={{ background: 'linear-gradient(157.713deg, rgb(195, 236, 217) 0%, rgb(251, 237, 206) 60.799%, rgb(231, 205, 241) 92.809%)' }}
-              />
-              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.28)_0%,rgba(255,255,255,0.72)_45%,rgba(255,255,255,0.9)_100%)]" />
-            </div>
+            {locationStatus === 'loading' && (
+              <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+                <div
+                  className="absolute left-[-23px] top-[-84px] h-[981px] w-[502px]"
+                  style={{ background: 'linear-gradient(157.713deg, rgb(195, 236, 217) 0%, rgb(251, 237, 206) 60.799%, rgb(231, 205, 241) 92.809%)' }}
+                />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.28)_0%,rgba(255,255,255,0.72)_45%,rgba(255,255,255,0.9)_100%)]" />
+              </div>
             )}
             {locationStatus === 'loading' && (
               <div className="relative z-10 flex flex-1 flex-col items-center justify-center text-center">
@@ -1912,142 +1908,192 @@ const SetupFlow = ({
             )}
             {(locationStatus === 'success' || locationStatus === 'denied' || locationStatus === 'error' || locationStatus === 'unavailable') && (
               <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="relative z-10 flex w-full min-h-0 flex-1 flex-col">
-                <div
-                  className={
-                    showLocationFailBackdrop
-                      ? LOCATION_FAIL_LAYOUT.resultCard
-                      : 'rounded-[30px] border border-black/[0.05] bg-white/90 p-5 shadow-[0_20px_54px_-30px_rgba(0,0,0,0.22)] backdrop-blur-md'
-                  }
-                >
-                  {!showLocationFailBackdrop ? (
-                    <div
-                      className="mb-4 flex h-14 w-14 items-center justify-center rounded-[18px] text-white shadow-[0_14px_32px_-12px_rgba(110,206,184,0.56)]"
-                      style={{ background: 'linear-gradient(140deg, rgb(110, 206, 184) 3.6706%, rgb(155, 136, 216) 54.633%, rgb(240, 196, 96) 96.329%)' }}
-                    >
-                      <MapPin size={25} strokeWidth={2.2} />
-                    </div>
-                  ) : (
-                    <img
-                      src="/dingweibiao.png"
-                      alt="定位图标"
-                      className={LOCATION_FAIL_LAYOUT.icon}
-                    />
-                  )}
-                  {locationStatus === 'success' && locationAddress ? (
+                {(() => {
+                  const successWithAddress = locationStatus === 'success' && !!locationAddress;
+                  const badge = successWithAddress ? '已获取位置' : '可继续手动填写';
+                  const title =
+                    successWithAddress
+                      ? '定位成功'
+                      : locationStatus === 'denied'
+                        ? '位置权限已拒绝'
+                        : locationStatus === 'unavailable'
+                          ? '暂时无法获取位置'
+                          : locationStatus === 'error'
+                            ? '无法使用定位'
+                            : '已获取位置';
+                  const desc = successWithAddress
+                    ? ''
+                    : locationStatus === 'denied'
+                      ? '若系统已选择允许仍出现本页，可重新定位；若曾选择拒绝，请在浏览器网站设置里允许位置。'
+                      : locationStatus === 'unavailable'
+                        ? '可能是信号弱、设备暂不可用或 5 秒内未取到坐标。你可以重新定位，也可以先手动填写公司。'
+                        : locationStatus === 'error'
+                          ? '请使用 http://localhost 或 HTTPS 打开本页，局域网 IP 的 HTTP 下浏览器会禁用定位。'
+                          : '已拿到附近坐标，但地址解析暂时失败。你仍可手动填写公司继续。';
+                  const showRetry = !successWithAddress;
+                  return (
                     <>
-                      <h2 className="text-[24px] font-black tracking-[-0.05em] text-[#2F3E46]">定位成功</h2>
-                      <p className="mt-2 flex items-center gap-2 text-[13px] font-bold text-slate-500">
-                        <span className="h-2 w-2 rounded-full bg-[rgb(110,206,184)]"></span>
-                        {locationAddress}
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <span className={`inline-flex rounded-[8px] border px-2.5 py-1 text-[10px] font-black tracking-[0.08em] ${showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.continueTag : 'border-white/60 bg-[#F8FAF8] text-[#87A382]'}`}>
-                        可继续手动填写
-                      </span>
-                      <h2 className={`text-[24px] font-black tracking-[-0.05em] ${showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.title : 'mt-3 text-[#2F3E46]'}`}>
-                        {locationStatus === 'denied' && '位置权限已拒绝'}
-                        {locationStatus === 'unavailable' && '暂时无法获取位置'}
-                        {locationStatus === 'error' && '无法使用定位'}
-                        {locationStatus === 'success' && !locationAddress && '已获取位置'}
-                      </h2>
-                      <p className={`mt-2 text-[13px] font-semibold leading-relaxed ${showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.desc : 'text-slate-500'}`}>
-                        {locationStatus === 'denied' && '若系统已选择允许仍出现本页，可重新定位；若曾选择拒绝，请在浏览器网站设置里允许位置。'}
-                        {locationStatus === 'unavailable' && '可能是信号弱、设备暂不可用或 5 秒内未取到坐标。你可以重新定位，也可以先手动填写公司。'}
-                        {locationStatus === 'error' && '请使用 http://localhost 或 HTTPS 打开本页，局域网 IP 的 HTTP 下浏览器会禁用定位。'}
-                        {locationStatus === 'success' && !locationAddress && '已拿到附近坐标，但地址解析暂时失败。你仍可手动填写公司继续。'}
-                      </p>
-                      {(locationStatus === 'denied' || locationStatus === 'unavailable' || locationStatus === 'error' || (locationStatus === 'success' && !locationAddress)) && (
+                      <div className={LOCATION_FAIL_LAYOUT.resultCard}>
+                        <span className={LOCATION_FAIL_LAYOUT.continueTag}>{badge}</span>
+                        <div
+                          className="relative z-[1] mb-4 flex h-14 w-14 items-center justify-center rounded-[18px] text-white shadow-[0_14px_32px_-12px_rgba(110,206,184,0.56)]"
+                          style={{
+                            background: 'linear-gradient(140deg, rgb(110, 206, 184) 3.6706%, rgb(155, 136, 216) 54.633%, rgb(240, 196, 96) 96.329%)',
+                          }}
+                        >
+                          <MapPin size={25} strokeWidth={2.2} />
+                        </div>
+                        <h2 className={`text-[24px] font-black tracking-[-0.05em] ${LOCATION_FAIL_LAYOUT.title}`}>{title}</h2>
+                        {successWithAddress ? (
+                          <p className="mt-2 flex items-center gap-2 text-[13px] font-bold text-slate-500">
+                            <span className="h-2 w-2 rounded-full bg-[rgb(110,206,184)]" />
+                            {locationAddress}
+                          </p>
+                        ) : (
+                          <p className={`mt-2 text-[13px] font-semibold leading-relaxed ${LOCATION_FAIL_LAYOUT.desc}`}>{desc}</p>
+                        )}
+                        {showRetry && (
+                          <button
+                            type="button"
+                            onClick={requestLocation}
+                            className={LOCATION_FAIL_LAYOUT.retryBtn}
+                            style={{ backgroundImage: LOGIN_BRAND_GRADIENT }}
+                          >
+                            重新定位
+                          </button>
+                        )}
+                      </div>
+                      <div className={LOCATION_FAIL_LAYOUT.companyCard}>
+                        <label className={LOCATION_FAIL_LAYOUT.companyLabel}>你在哪个公司实习？</label>
+                        <div className="relative min-h-0">
+                          <input
+                            type="text"
+                            value={profile.company}
+                            onChange={(e) => {
+                              setProfile({ ...profile, company: e.target.value });
+                              setShowCompanySuggest(true);
+                            }}
+                            onFocus={() => setShowCompanySuggest(true)}
+                            placeholder="例如：腾讯、字节跳动、美团..."
+                            className={LOCATION_FAIL_LAYOUT.companyInput}
+                          />
+                          {locationStatus === 'success' && nearbyCompanies.length > 0 && (
+                            <p className="mt-2 text-[11px] font-bold text-[#87A382]">
+                              已根据你当前位置优先推荐附近公司
+                            </p>
+                          )}
+                          {showCompanySuggest && (profile.company.length >= 1 || nearbyCompanies.length > 0) && (() => {
+                            const COMPANIES = [
+                              '腾讯',
+                              '字节跳动',
+                              '美团',
+                              '阿里巴巴',
+                              '百度',
+                              '京东',
+                              '网易',
+                              '快手',
+                              '小米',
+                              '华为',
+                              'OPPO',
+                              'vivo',
+                              '滴滴',
+                              '拼多多',
+                              'B站',
+                              '爱奇艺',
+                              '哔哩哔哩',
+                              '蚂蚁集团',
+                              '微软',
+                              '谷歌',
+                              '苹果',
+                              '三星',
+                              '亚马逊',
+                              'Meta',
+                              '英特尔',
+                              '思科',
+                              'IBM',
+                              '博世',
+                              '西门子',
+                              '宝洁',
+                              '麦肯锡',
+                              '德勤',
+                              '普华永道',
+                              '毕马威',
+                              '安永',
+                              '高盛',
+                              '摩根大通',
+                              '花旗银行',
+                              '工商银行',
+                              '中国银行',
+                              '建设银行',
+                              '农业银行',
+                              '招商银行',
+                              '万科',
+                              '碧桂园',
+                              '恒大',
+                              '联想',
+                              'TCL',
+                              '海尔',
+                              '格力',
+                              '比亚迪',
+                              '宁德时代',
+                              '中芯国际',
+                              '寒武纪',
+                              '商汤科技',
+                              '旷视科技',
+                              '科大讯飞',
+                              '同程旅行',
+                              '携程',
+                              '去哪儿',
+                              '途牛',
+                              '同城',
+                              '招聘',
+                              '脉脉',
+                              'BOSS直聘',
+                              '猎聘',
+                              '智联招聘',
+                              '前程无忧',
+                            ];
+                            const q = profile.company.trim();
+                            const nearbyMatched = nearbyCompanies.filter((co) => !q || co.includes(q) || q.includes(co.slice(0, 2)));
+                            const fallbackMatched = q ? COMPANIES.filter((co) => co.includes(q) || q.includes(co.slice(0, 2))) : [];
+                            const filtered = Array.from(new Set([...nearbyMatched, ...fallbackMatched])).slice(0, 6);
+                            return filtered.length > 0 ? (
+                              <div className="mt-2 overflow-hidden rounded-[18px] border border-slate-100 bg-white shadow-[0_14px_34px_-18px_rgba(0,0,0,0.22)]">
+                                {filtered.map((co) => (
+                                  <button
+                                    key={co}
+                                    type="button"
+                                    onClick={() => {
+                                      setProfile({ ...profile, company: co });
+                                      setShowCompanySuggest(false);
+                                    }}
+                                    className="flex w-full items-center gap-2 border-b border-slate-50 px-5 py-3 text-left text-[14px] font-bold text-slate-700 last:border-0 hover:bg-slate-50 active:bg-slate-100"
+                                  >
+                                    <Briefcase size={14} className="shrink-0 text-[#87A382]" /> {co}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null;
+                          })()}
+                        </div>
+                      </div>
+                      <div className={`relative z-10 w-full shrink-0 ${LOCATION_FAIL_LAYOUT.bottomArea}`}>
                         <button
                           type="button"
-                          onClick={requestLocation}
-                          className={showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.retryBtn : 'mt-5 w-full rounded-[22px] py-3.5 text-[15px] font-black text-white transition-transform active:scale-[0.98] border border-white/40 shadow-[0_12px_30px_-14px_rgba(110,206,184,0.5)]'}
-                          style={{ backgroundImage: LOGIN_BRAND_GRADIENT }}
+                          onClick={() => {
+                            if (isValidCompany) setStep('persona');
+                          }}
+                          className={`w-full rounded-[24px] py-[16px] font-black text-[16px] leading-snug transition-all duration-300 sm:py-[18px] ${
+                            isValidCompany ? LOCATION_FAIL_LAYOUT.nextBtnEnabled : LOCATION_FAIL_LAYOUT.nextBtnDisabled
+                          }`}
+                          style={isValidCompany ? { backgroundImage: LOGIN_BRAND_GRADIENT } : undefined}
                         >
-                          重新定位
+                          下一步
                         </button>
-                      )}
+                      </div>
                     </>
-                  )}
-                </div>
-                <div
-                  className={
-                    showLocationFailBackdrop
-                      ? LOCATION_FAIL_LAYOUT.companyCard
-                      : 'mt-5 rounded-[28px] border border-black/[0.05] bg-white/92 p-4 shadow-[0_18px_46px_-30px_rgba(0,0,0,0.2)] backdrop-blur-md'
-                  }
-                >
-                  <label className={showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.companyLabel : 'mb-3 block text-[15px] font-semibold text-slate-400'}>你在哪个公司实习？</label>
-                  <div className="relative min-h-0">
-                  <input
-                    type="text"
-                    value={profile.company}
-                    onChange={e => {
-                      setProfile({ ...profile, company: e.target.value });
-                      setShowCompanySuggest(true);
-                    }}
-                    onFocus={() => setShowCompanySuggest(true)}
-                    placeholder="例如：腾讯、字节跳动、美团..."
-                    className={showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.companyInput : 'w-full rounded-[10px] px-5 py-4 text-[16px] font-black transition-colors focus:outline-none border border-slate-200 bg-white text-[#2F3E46] shadow-[0_10px_24px_-20px_rgba(0,0,0,0.2)] placeholder:text-slate-300 focus:border-[#87A382]'} />
-                  {locationStatus === 'success' && nearbyCompanies.length > 0 && (
-                    <p className="mt-2 text-[11px] font-bold text-[#87A382]">已根据你当前位置优先推荐附近公司</p>
-                  )}
-                  {showCompanySuggest && (profile.company.length >= 1 || nearbyCompanies.length > 0) && (() => {
-                    const COMPANIES = ['腾讯','字节跳动','美团','阿里巴巴','百度','京东','网易','快手','小米','华为','OPPO','vivo','滴滴','拼多多','B站','爱奇艺','哔哩哔哩','蚂蚁集团','微软','谷歌','苹果','三星','亚马逊','Meta','英特尔','思科','IBM','博世','西门子','宝洁','麦肯锡','德勤','普华永道','毕马威','安永','高盛','摩根大通','花旗银行','工商银行','中国银行','建设银行','农业银行','招商银行','万科','碧桂园','恒大','联想','TCL','海尔','格力','比亚迪','宁德时代','中芯国际','寒武纪','商汤科技','旷视科技','科大讯飞','同程旅行','携程','去哪儿','途牛','同城','招聘','脉脉','BOSS直聘','猎聘','智联招聘','前程无忧'];
-                    const q = profile.company.trim();
-                    const nearbyMatched = nearbyCompanies.filter(
-                      (co) => !q || co.includes(q) || q.includes(co.slice(0, 2))
-                    );
-                    const fallbackMatched = q
-                      ? COMPANIES.filter((co) => co.includes(q) || q.includes(co.slice(0, 2)))
-                      : [];
-                    const filtered = Array.from(new Set([...nearbyMatched, ...fallbackMatched])).slice(0, 6);
-                    return filtered.length > 0 ? (
-                      <div className="mt-2 overflow-hidden rounded-[18px] border border-slate-100 bg-white shadow-[0_14px_34px_-18px_rgba(0,0,0,0.22)]">
-                        {filtered.map(co => (
-                          <button
-                            key={co}
-                            type="button"
-                            onClick={() => {
-                              setProfile({ ...profile, company: co });
-                              setShowCompanySuggest(false);
-                            }}
-                            className="w-full text-left px-5 py-3 text-[14px] font-bold text-slate-700 hover:bg-slate-50 active:bg-slate-100 border-b border-slate-50 last:border-0 flex items-center gap-2"
-                          >
-                            <Briefcase size={14} className="text-[#87A382] shrink-0" /> {co}
-                          </button>
-                        ))}
-        </div>
-                    ) : null;
-                  })()}
-                  </div>
-                </div>
-                {!showLocationFailBackdrop && (
-                  <div
-                    className="pointer-events-none absolute bottom-[calc(5.75rem+max(0.5rem,env(safe-area-inset-bottom,0.75rem)))] right-6 z-0 flex max-w-[58%] items-end gap-1.5"
-                    aria-hidden
-                  >
-                    <div className="mb-0.5 rounded-[16px] rounded-br-sm border border-slate-100/90 bg-white/95 px-3 py-2 text-[10px] font-black leading-snug text-slate-500 shadow-sm backdrop-blur-[2px] sm:text-[11px]">
-                      告诉我你在哪里工作吧 📍
-                    </div>
-                    <div className="mb-0 text-[36px] filter drop-shadow-md sm:text-[40px]">🐧</div>
-                  </div>
-                )}
-                <div className={`relative z-10 w-full shrink-0 ${showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.bottomArea : 'mt-2 bg-gradient-to-t from-white via-white to-transparent pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom,1rem))]'}`}>
-                  <button
-                    type="button"
-                    onClick={() => { if (isValidCompany) setStep('persona'); }}
-                    className={`w-full rounded-[24px] py-[16px] font-black text-[16px] leading-snug transition-all duration-300 sm:py-[18px] ${
-                      isValidCompany
-                        ? (showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.nextBtnEnabled : 'border border-white/35 text-white shadow-[0_16px_36px_-12px_rgba(110,206,184,0.48)] active:scale-[0.98]')
-                        : (showLocationFailBackdrop ? LOCATION_FAIL_LAYOUT.nextBtnDisabled : 'pointer-events-none bg-slate-200 text-slate-400')
-                    }`}
-                    style={isValidCompany ? { backgroundImage: LOGIN_BRAND_GRADIENT } : undefined}
-                  >
-                    下一步
-                  </button>
-                </div>
+                  );
+                })()}
               </motion.div>
             )}
           </motion.div>
@@ -7100,12 +7146,14 @@ const App = () => {
   const previewModalIsHost = !!(guestId && previewSceneForModal?.hostGuestId && previewSceneForModal.hostGuestId === guestId);
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-[#C8C5BE] p-4 font-['Inter']">
-      <div className="relative w-[393px] h-[852px] rounded-[55px] shadow-[0_0_0_12px_#1a1a1a,0_22px_70px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col border-[2px] border-white/10" style={{ backgroundColor: COLORS.bg }}>
-        
-        {/* -- Status Bar Placeholder (Always visible, highest z-index) -- */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-[120px] h-[35px] bg-black rounded-[20px] z-[100]"></div>
-        <div className="h-14 w-full flex justify-between items-end px-10 pb-2 z-50 pointer-events-none">
+    <div className="flex min-h-[100dvh] w-full flex-col bg-[#FAFAFA] font-['Inter'] md:min-h-screen md:flex-row md:items-center md:justify-center md:bg-[#C8C5BE] md:p-4">
+      <div
+        className="relative flex w-full flex-col overflow-hidden border-0 bg-transparent shadow-none max-md:min-h-[100dvh] max-md:flex-1 max-md:rounded-none max-md:border-0 md:h-[852px] md:min-h-0 md:w-[393px] md:flex-none md:rounded-[55px] md:border-[2px] md:border-white/10 md:shadow-[0_0_0_12px_#1a1a1a,0_22px_70px_rgba(0,0,0,0.3)]"
+        style={{ backgroundColor: COLORS.bg }}
+      >
+        {/* -- 电脑演示用：伪刘海 + 状态栏（真手机全屏时隐藏） -- */}
+        <div className="pointer-events-none absolute top-3 left-1/2 z-[100] hidden h-[35px] w-[120px] -translate-x-1/2 rounded-[20px] bg-black md:block" />
+        <div className="pointer-events-none z-50 hidden h-14 w-full items-end justify-between px-10 pb-2 md:flex">
           <span className={`text-[15px] font-black ${appState !== 'main' ? 'text-slate-600' : 'text-slate-900'}`}>9:41</span>
           <div className={`flex gap-1.5 items-center pb-0.5 opacity-20 ${appState !== 'main' ? 'grayscale opacity-40' : ''}`}>
             <div className="w-[18px] h-[10px] border-2 rounded-[3px] border-current"></div>
@@ -7562,8 +7610,8 @@ const App = () => {
           )}
         </AnimatePresence>
 
-        <div className="absolute bottom-1.5 w-full flex justify-center z-[100] pointer-events-none">
-          <div className="w-[130px] h-[5px] bg-black/5 rounded-full"></div>
+        <div className="pointer-events-none absolute bottom-1.5 z-[100] hidden w-full justify-center md:flex">
+          <div className="h-[5px] w-[130px] rounded-full bg-black/5" />
         </div>
 
       </div>
