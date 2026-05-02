@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import { track } from '@/lib/analytics';
 import { supabase, type AppGuestDataRow, type DaziItem } from '@/lib/supabase';
@@ -1526,7 +1526,8 @@ const Login = ({ onLogin }) => {
 const SETUP_AVATARS = PROFILE_AVATARS;
 // 定位结果页（成功 / 拒绝 / 失败等共用骨架）可调参数区
 const LOCATION_FAIL_LAYOUT = {
-  resultCard: 'relative mt-[4.5rem] rounded-[22px] border border-white/70 bg-white/92 px-6 pb-4 pt-[2.6rem] shadow-[0_18px_42px_-28px_rgba(0,0,0,0.28)] backdrop-blur-[10px]',
+  resultCard:
+    'relative mt-[3rem] rounded-[22px] border border-white/70 bg-white/92 px-6 pb-4 pt-[2.6rem] shadow-[0_18px_42px_-28px_rgba(0,0,0,0.28)] backdrop-blur-[10px]',
   continueTag:
     'pointer-events-none absolute right-5 top-6 z-10 rounded-[8px] border border-[#CFE9D7] bg-[#E4F5E8] px-2.5 py-1 text-[10px] font-black tracking-[0.08em] text-[#6BAD82]',
   title: 'mt-0 text-[#1F2329]',
@@ -1561,6 +1562,14 @@ const SetupFlow = ({
   const [showPermission, setShowPermission] = useState(false);
   /** 插画内浮层标签：首帧隐藏，延迟出现降低首屏信息密度 */
   const [mapPinsVisible, setMapPinsVisible] = useState(false);
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined' || process.env.NODE_ENV !== 'development') return;
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('previewLocation') !== 'denied') return;
+    setStep('location');
+    setLocationStatus('denied');
+  }, []);
 
   useEffect(() => {
     if (step !== 'locationPermission') {
@@ -1854,7 +1863,7 @@ const SetupFlow = ({
         {step === 'location' && (
           <motion.div key="location" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}
             transition={{ duration: 0.4 }}
-            className="absolute inset-0 flex min-h-0 flex-col overflow-hidden px-6 pt-[max(4.35rem,env(safe-area-inset-top,0px)+2rem)] pb-0"
+            className="absolute inset-0 flex min-h-0 flex-col overflow-hidden px-6 pt-[max(3.5rem,env(safe-area-inset-top,0px)+1.5rem)] pb-0"
             style={
               locationStatus === 'loading'
                 ? { background: '#EEEADC' }
@@ -6255,6 +6264,15 @@ const App = () => {
       setIsHydrated(true);
       return;
     }
+
+    /** 仅开发：打开 /?previewLocation=denied 直接进「定位已拒绝」结果页（避免已登录用户一直停在首页） */
+    const devDenied =
+      process.env.NODE_ENV === 'development' && params.get('previewLocation') === 'denied';
+    if (devDenied) {
+      localStorage.removeItem(STORAGE_KEYS.userProfile);
+      localStorage.setItem(STORAGE_KEYS.appState, 'setup');
+    }
+
     const gid = getOrCreateGuestId();
     guestIdRef.current = gid;
     setGuestId(gid);
