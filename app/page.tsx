@@ -633,13 +633,33 @@ function safeParseJSON<T>(raw: string | null, fallback: T): T {
 
 const PROFILE_AVATARS = Array.from({ length: 12 }, (_, i) => `/头像/${i + 1}.png`);
 
-/** 预加载职场人设 12 张头像，避免进入选择页后逐个「蹦」出来 */
-function preloadProfileAvatars() {
+/** 全站用到的静态 PNG（与页面里路径保持一致）；App 启动后并行预加载，减少各屏一张张延迟出现 */
+const UNIPASS_STATIC_ASSET_URLS = [
+  '/splash-ip-cloud.png',
+  '/dazi-guide.png',
+  '/quanzi-guide.png',
+  '/pobing-guide.png',
+  '/ai-assistant-guide.png',
+  '/onboarding-ip.png',
+  '/通知.png',
+  '/dingweishibai.png',
+  '/高情商嘴替.png',
+  '/手账.png',
+  '/圈子IP.png',
+  '/职场成就胶囊.png',
+  '/起始页.png',
+  '/星星.png',
+  '/首页IP.png',
+  ...PROFILE_AVATARS,
+] as const;
+
+function preloadUnipassStaticImages() {
   if (typeof window === 'undefined') return;
-  PROFILE_AVATARS.forEach((src) => {
+  for (const src of UNIPASS_STATIC_ASSET_URLS) {
     const im = new window.Image();
+    im.decoding = 'async';
     im.src = src;
-  });
+  }
 }
 
 /** 随机花名词库（前缀 + 后缀组合，不重复展示职位/真名） */
@@ -714,8 +734,8 @@ function AvatarVisual({
   className,
   imgClassName = 'h-full w-full object-cover',
   imgStyle,
-  /** 列表/Feed 用 lazy；人设宫格等首屏关键图用 eager，避免一张张延迟出现 */
-  imgLoading = 'lazy',
+  /** 默认 eager：与全站静态图预加载配合，避免宫格/列表头像一张张晚出现；长列表可显式传 lazy */
+  imgLoading = 'eager',
   fetchPriority,
   decoding = 'async',
 }: {
@@ -814,11 +834,7 @@ const EditProfileModal = ({
                 onClick={() => setForm((p) => ({ ...p, avatar: a }))}
                 className={`h-10 w-10 overflow-hidden rounded-[16px] border text-lg transition-all ${form.avatar === a ? 'border-[#87A382]/40 bg-white/90 shadow-[0_10px_22px_-16px_rgba(64,100,120,0.45)]' : 'border-white/70 bg-white/58'}`}
               >
-                <AvatarVisual
-                  avatar={a}
-                  className="flex h-full w-full items-center justify-center text-lg"
-                  imgLoading="eager"
-                />
+                <AvatarVisual avatar={a} className="flex h-full w-full items-center justify-center text-lg" />
               </button>
             ))}
           </div>
@@ -884,15 +900,6 @@ const Onboarding = ({ onComplete }) => {
   const [guideHeroReady, setGuideHeroReady] = useState(true);
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    ['/splash-ip-cloud.png', '/dazi-guide.png', '/quanzi-guide.png', '/pobing-guide.png', '/ai-assistant-guide.png', '/onboarding-ip.png'].forEach((src) => {
-      const im = new window.Image();
-      im.fetchPriority = 'high';
-      im.src = src;
-    });
-  }, []);
 
   useEffect(() => {
     if (step >= 1 && step <= 4) setGuideHeroReady(false);
@@ -1150,6 +1157,9 @@ const Onboarding = ({ onComplete }) => {
                 <motion.img
                   src="/splash-ip-cloud.png"
                   alt="Unipass splash mascot"
+                  loading="eager"
+                  decoding="async"
+                  fetchPriority="high"
                   className="absolute left-1/2 -translate-x-1/2 bottom-[-8px] w-[372px] max-w-none object-contain"
                   animate={{
                     y: [0, -3, 0],
@@ -1750,10 +1760,6 @@ const SetupFlow = ({
     img.src = '/通知.png';
   }, []);
 
-  useEffect(() => {
-    preloadProfileAvatars();
-  }, []);
-
   useLayoutEffect(() => {
     if (typeof window === 'undefined' || process.env.NODE_ENV !== 'development') return;
     const p = new URLSearchParams(window.location.search);
@@ -2344,7 +2350,6 @@ const SetupFlow = ({
                         avatar={av}
                         className="flex h-full w-full items-center justify-center overflow-hidden"
                         imgStyle={personaSetupAvatarImgStyle(PERSONA_SETUP_AVATAR_IMG_TUNING[idx])}
-                        imgLoading="eager"
                         fetchPriority={idx < 4 ? 'high' : 'auto'}
                       />
                     </button>
@@ -2442,6 +2447,8 @@ const SetupFlow = ({
                 src="/通知.png"
                 alt="通知插图"
                 className="block w-full h-auto"
+                loading="eager"
+                decoding="async"
               />
 
               <div className="absolute inset-0 flex flex-col items-center px-6 text-center">
@@ -4046,7 +4053,7 @@ const PublishModal = ({ onClose, onPublished, userProfile }) => {
           <div className="mt-3 grid grid-cols-3 gap-2 shrink-0">
             {selectedImages.map((img, idx) => (
               <div key={idx} className="relative aspect-square overflow-hidden rounded-[16px] border border-white/70 bg-white/55 shadow-[0_8px_18px_-16px_rgba(64,100,120,0.45)] backdrop-blur-md">
-                <img src={img} alt="" className="w-full h-full object-cover" />
+                <img src={img} alt="" className="w-full h-full object-cover" loading="eager" decoding="async" />
                 <button onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== idx))}
                   className="absolute top-1 right-1 w-5 h-5 bg-[#2F3E46]/55 backdrop-blur-md rounded-full flex items-center justify-center">
                   <X size={10} className="text-white" />
@@ -4886,6 +4893,8 @@ ${achievementInput}`,
                   transition={{ opacity: { duration: 0.22, ease: 'easeOut' }, y: { duration: 2.2, repeat: Infinity, ease: 'easeInOut' }, scale: { duration: 2.2, repeat: Infinity, ease: 'easeInOut' }, rotate: { duration: 2.2, repeat: Infinity, ease: 'easeInOut' } }}
                   src="/高情商嘴替.png"
                   alt="职场IP"
+                  loading="eager"
+                  decoding="async"
                   className="pointer-events-none absolute left-1 -top-3 z-0 h-[88px] w-auto drop-shadow-[0_10px_14px_rgba(53,75,68,0.24)]"
                 />
               )}
@@ -4965,6 +4974,8 @@ ${achievementInput}`,
                   transition={{ opacity: { duration: 0.22, ease: 'easeOut' }, y: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }, scale: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }, rotate: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' } }}
                   src="/手账.png"
                   alt="成就胶囊IP"
+                  loading="eager"
+                  decoding="async"
                   className="pointer-events-none absolute -bottom-3 right-[-15px] h-[106px] w-auto drop-shadow-[0_10px_14px_rgba(74,57,106,0.22)]"
                 />
               )}
@@ -5165,6 +5176,8 @@ const CommunityFeed = ({
           <img
             src="/圈子IP.png"
             alt="圈子IP"
+            loading="eager"
+            decoding="async"
             className="absolute bottom-0 left-[-18%] h-[104%] w-auto max-w-none object-contain drop-shadow-[0_14px_18px_rgba(62,92,107,0.24)]"
           />
         </div>
@@ -5244,7 +5257,13 @@ const CommunityFeed = ({
         </div>
       ) : visibleFeeds.length === 0 ? (
         <div className={`relative z-10 mx-1 my-6 flex flex-col items-center justify-center rounded-[28px] ${HOME_SURFACE.glassCard} px-6 py-14 text-[#56756D]/55`}>
-          <img src="/onboarding-ip.png" alt="空状态企鹅" className="w-20 h-20 object-contain mb-4 opacity-80" />
+          <img
+            src="/onboarding-ip.png"
+            alt="空状态企鹅"
+            className="w-20 h-20 object-contain mb-4 opacity-80"
+            loading="eager"
+            decoding="async"
+          />
           <p className="text-[13px] font-bold mb-2 text-[#2F3E46]">当前筛选下暂无内容</p>
           <p className="text-[12px] opacity-70 text-center leading-relaxed mb-4">
             {feeds.length === 0 
@@ -5559,7 +5578,8 @@ const UserProfile = ({
                   src="/职场成就胶囊.png"
                   alt="职场成就胶囊"
                   className={`mx-auto ${PROFILE_ILLUSTRATION.achievementCapsuleOffset} ${PROFILE_ILLUSTRATION.achievementCapsuleHeight} w-auto ${PROFILE_ILLUSTRATION.achievementCapsuleMaxW} object-contain drop-shadow-[0_8px_22px_-8px_rgba(80,92,140,0.28)] select-none pointer-events-none`}
-                  loading="lazy"
+                  loading="eager"
+                  decoding="async"
                 />
                 <p className="mx-auto mt-2 max-w-[18rem] text-[13px] font-semibold leading-relaxed tracking-tight text-[#1F2933]">
                   把今天的琐碎，收成一颗会发光的成就胶囊。
@@ -5611,7 +5631,13 @@ const UserProfile = ({
         <div className="flex w-full flex-col gap-1.5">
           {dazis.length === 0 && (
             <div className="-mt-1 flex flex-col items-center pt-1 pb-4 text-slate-400">
-              <img src="/起始页.png" alt="起始页" className="-mt-1 mb-1.5 h-20 w-20 object-contain opacity-60" />
+              <img
+                src="/起始页.png"
+                alt="起始页"
+                className="-mt-1 mb-1.5 h-20 w-20 object-contain opacity-60"
+                loading="eager"
+                decoding="async"
+              />
               <p className="text-[12px] font-bold text-slate-400">还没有搭子</p>
               <p className="mt-0.5 text-center text-[11px] text-slate-300">加入一个局并发送消息，就能结识新搭子 ✨</p>
             </div>
@@ -5681,6 +5707,8 @@ const UserProfile = ({
                       src="/星星.png"
                       alt=""
                       draggable={false}
+                      loading="eager"
+                      decoding="async"
                       className={`pointer-events-none ${PROFILE_ILLUSTRATION.daziStarImg} object-contain drop-shadow-[0_4px_12px_rgba(161,196,253,0.45)]`}
                     />
                   </div>
@@ -6683,6 +6711,11 @@ const App = () => {
     window.addEventListener('offline', onOffline);
     return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
   }, []);
+
+  useEffect(() => {
+    preloadUnipassStaticImages();
+  }, []);
+
   const [userProfile, setUserProfile] = useState<{ nickname: string; company: string; gender: string; role: string; avatar: string; privacyStealth?: boolean; privacyMosaic?: boolean; isStudentVerified?: boolean; studentEmail?: string } | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
   const guestIdRef = useRef('');
@@ -7886,6 +7919,9 @@ const App = () => {
                                 src="/首页IP.png"
                                 alt="首页IP"
                                 className={HOME_HERO_LAYOUT.ipImage}
+                                loading="eager"
+                                decoding="async"
+                                fetchPriority="high"
                               />
                             </div>
                           </div>
