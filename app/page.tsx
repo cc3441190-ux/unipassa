@@ -611,6 +611,17 @@ const STORAGE_KEYS = {
   feedComments: 'unipass_feed_comments',
 };
 
+/** 清除本应用写入的 localStorage（含群聊 thread、dazi 私聊等前缀键） */
+function clearAllUnipassLocalStorage() {
+  if (typeof window === 'undefined') return;
+  const toRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('unipass_')) toRemove.push(k);
+  }
+  toRemove.forEach((k) => localStorage.removeItem(k));
+}
+
 function safeParseJSON<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
   try {
@@ -621,6 +632,15 @@ function safeParseJSON<T>(raw: string | null, fallback: T): T {
 }
 
 const PROFILE_AVATARS = Array.from({ length: 12 }, (_, i) => `/头像/${i + 1}.png`);
+
+/** 预加载职场人设 12 张头像，避免进入选择页后逐个「蹦」出来 */
+function preloadProfileAvatars() {
+  if (typeof window === 'undefined') return;
+  PROFILE_AVATARS.forEach((src) => {
+    const im = new window.Image();
+    im.src = src;
+  });
+}
 
 /** 随机花名词库（前缀 + 后缀组合，不重复展示职位/真名） */
 const NICKNAME_PREFIXES = ['云端','星际','代码','咖啡','番茄','彩虹','氧气','摸鱼','回旋','闪光','薄荷','柠檬','深夜','清晨','迷途'];
@@ -694,18 +714,33 @@ function AvatarVisual({
   className,
   imgClassName = 'h-full w-full object-cover',
   imgStyle,
+  /** 列表/Feed 用 lazy；人设宫格等首屏关键图用 eager，避免一张张延迟出现 */
+  imgLoading = 'lazy',
+  fetchPriority,
+  decoding = 'async',
 }: {
   avatar?: string | null;
   fallback?: string;
   className?: string;
   imgClassName?: string;
   imgStyle?: React.CSSProperties;
+  imgLoading?: 'lazy' | 'eager';
+  fetchPriority?: 'high' | 'low' | 'auto';
+  decoding?: 'async' | 'auto' | 'sync';
 }) {
   const display = avatar?.trim() || fallback;
   return (
     <span className={className}>
       {isImageAvatar(display) ? (
-        <img src={display} alt="头像" className={imgClassName} style={imgStyle} loading="lazy" />
+        <img
+          src={display}
+          alt="头像"
+          className={imgClassName}
+          style={imgStyle}
+          loading={imgLoading}
+          decoding={decoding}
+          {...(fetchPriority ? { fetchPriority } : {})}
+        />
       ) : (
         display
       )}
@@ -779,7 +814,11 @@ const EditProfileModal = ({
                 onClick={() => setForm((p) => ({ ...p, avatar: a }))}
                 className={`h-10 w-10 overflow-hidden rounded-[16px] border text-lg transition-all ${form.avatar === a ? 'border-[#87A382]/40 bg-white/90 shadow-[0_10px_22px_-16px_rgba(64,100,120,0.45)]' : 'border-white/70 bg-white/58'}`}
               >
-                <AvatarVisual avatar={a} className="flex h-full w-full items-center justify-center text-lg" />
+                <AvatarVisual
+                  avatar={a}
+                  className="flex h-full w-full items-center justify-center text-lg"
+                  imgLoading="eager"
+                />
               </button>
             ))}
           </div>
@@ -1711,6 +1750,10 @@ const SetupFlow = ({
     img.src = '/通知.png';
   }, []);
 
+  useEffect(() => {
+    preloadProfileAvatars();
+  }, []);
+
   useLayoutEffect(() => {
     if (typeof window === 'undefined' || process.env.NODE_ENV !== 'development') return;
     const p = new URLSearchParams(window.location.search);
@@ -2301,6 +2344,8 @@ const SetupFlow = ({
                         avatar={av}
                         className="flex h-full w-full items-center justify-center overflow-hidden"
                         imgStyle={personaSetupAvatarImgStyle(PERSONA_SETUP_AVATAR_IMG_TUNING[idx])}
+                        imgLoading="eager"
+                        fetchPriority={idx < 4 ? 'high' : 'auto'}
                       />
                     </button>
                   ))}
@@ -6745,18 +6790,34 @@ const App = () => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const forceResetOnboarding = params.get('resetOnboarding') === '1';
+    /** 演示/分享：每次完整打开页面都从引导+登录重新开始（在 Vercel 设 NEXT_PUBLIC_UNIPASS_FRESH_EACH_VISIT=1） */
+    const freshEachVisit = process.env.NEXT_PUBLIC_UNIPASS_FRESH_EACH_VISIT === '1';
+    if (freshEachVisit) {
+      clearAllUnipassLocalStorage();
+    }
     if (forceResetOnboarding) {
-      localStorage.removeItem(STORAGE_KEYS.appState);
-      localStorage.removeItem(STORAGE_KEYS.userProfile);
-      localStorage.removeItem(STORAGE_KEYS.guestId);
-      localStorage.removeItem(STORAGE_KEYS.joinedIds);
-      localStorage.removeItem(STORAGE_KEYS.dazis);
-      localStorage.removeItem(STORAGE_KEYS.achievements);
-      localStorage.removeItem(STORAGE_KEYS.aiChat);
-      localStorage.removeItem(STORAGE_KEYS.userLocation);
-      localStorage.removeItem(STORAGE_KEYS.feedComments);
+      clearAllUnipassLocalStorage();
+      setUserProfile(null);
+      setJoinedIds([]);
+      setDazis([]);
+      setAchievements([]);
+      setAiChatMessages(defaultAiWelcome(null));
+      setUserLocation(null);
+      setActiveTab('home');
+      setFeedCommentsMap({});
+      setSceneIcebreakDoneIds([]);
       setAppState('onboarding');
+      const gid = getOrCreateGuestId();
+      guestIdRef.current = gid;
+      setGuestId(gid);
       setIsHydrated(true);
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.delete('resetOnboarding');
+        window.history.replaceState({}, '', u.pathname + u.search + u.hash);
+      } catch {
+        /* ignore */
+      }
       return;
     }
 
