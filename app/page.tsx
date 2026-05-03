@@ -4959,39 +4959,51 @@ ${achievementInput}`,
         </div>
 
         <div className="relative overflow-hidden rounded-[28px] border border-white/80 bg-white p-4 shadow-[0_14px_34px_-24px_rgba(88,70,128,0.34)]">
-          <div className="mb-4 flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-[12px] bg-[#FFF2D9] text-[18px] shadow-inner">📒</span>
-            <h3 className="text-[19px] font-black tracking-tight text-[#1F2933]">今日工作手账 · 成就胶囊</h3>
+          <div className="mb-3 flex items-center gap-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] bg-[#FFF2D9] text-[18px] shadow-inner">📒</span>
+            <h3 className="whitespace-nowrap text-[17px] font-black leading-snug tracking-tight text-[#1F2933] sm:text-[19px]">
+              今日工作手账 · 成就胶囊
+            </h3>
           </div>
 
-          <div className="relative mb-3">
+          <div className={`relative mb-4 transition-all duration-200 ${activeMascot === 'journal' ? 'pt-8' : 'pt-2'}`}>
             <AnimatePresence>
               {activeMascot === 'journal' && (
                 <motion.img
-                  initial={{ opacity: 0, y: 24, x: 10, scale: 0.92 }}
-                  animate={{ opacity: 1, y: [0, -2.5, 0], x: 0, scale: [1, 1.01, 1], rotate: [0, 1, 0] }}
-                  exit={{ opacity: 0, y: 18, x: 8, scale: 0.92 }}
-                  transition={{ opacity: { duration: 0.22, ease: 'easeOut' }, y: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }, scale: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }, rotate: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' } }}
+                  initial={{ opacity: 0, y: 24, scale: 0.92 }}
+                  animate={{ opacity: 1, y: [0, -3, 0], scale: [1, 1.012, 1], rotate: [0, 1.2, 0] }}
+                  exit={{ opacity: 0, y: 18, scale: 0.92 }}
+                  transition={{ opacity: { duration: 0.22, ease: 'easeOut' }, y: { duration: 2.2, repeat: Infinity, ease: 'easeInOut' }, scale: { duration: 2.2, repeat: Infinity, ease: 'easeInOut' }, rotate: { duration: 2.2, repeat: Infinity, ease: 'easeInOut' } }}
                   src="/手账.png"
                   alt="成就胶囊IP"
                   loading="eager"
                   decoding="async"
-                  className="pointer-events-none absolute -bottom-3 right-[-15px] h-[106px] w-auto drop-shadow-[0_10px_14px_rgba(74,57,106,0.22)]"
+                  className="pointer-events-none absolute right-1 -top-8 z-0 h-[88px] w-auto select-none drop-shadow-[0_10px_14px_rgba(74,57,106,0.24)]"
                 />
               )}
             </AnimatePresence>
-            <textarea
-              value={achievementInput}
-              onChange={(e) => {
-                setAchievementInput(e.target.value);
-                if(showCapsule) setShowCapsule(false);
-                setIsSaved(false);
-              }}
-              onFocus={() => setActiveMascot('journal')}
-              onBlur={() => setActiveMascot((prev) => (prev === 'journal' ? null : prev))}
-              placeholder="写几件今天工作上的事就行：例会、文档、跑腿、被骂了也算，流水账就可以 ✍️"
-              className="h-[118px] w-full resize-none rounded-[20px] border border-[#D5C4FF] bg-[#FCFAFF] px-4 py-4 pr-[112px] text-[13px] font-medium leading-relaxed text-slate-600 shadow-[0_0_0_1px_rgba(213,196,255,0.18),0_0_18px_rgba(184,158,255,0.26)] placeholder:text-slate-400/80 focus:outline-none focus:ring-2 focus:ring-[#C8B4FF]/35"
-            />
+            <div className="relative z-10 overflow-hidden rounded-[20px] border border-[#D5C4FF] bg-[#FCFAFF] shadow-[0_0_0_1px_rgba(213,196,255,0.18),0_0_18px_rgba(184,158,255,0.26)] focus-within:shadow-[inset_0_0_0_2px_rgba(200,180,255,0.45),0_0_0_1px_rgba(213,196,255,0.18),0_0_18px_rgba(184,158,255,0.26)]">
+              {!achievementInput.trim() && activeMascot !== 'journal' && (
+                <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center p-4">
+                  <p className="w-full max-w-[19rem] text-left text-[13px] font-medium leading-relaxed text-slate-400/80">
+                    写几件今天工作上的事就行：例会、文档、跑腿、被骂了也算，流水账就可以 ✍️
+                  </p>
+                </div>
+              )}
+              <textarea
+                value={achievementInput}
+                onChange={(e) => {
+                  setAchievementInput(e.target.value);
+                  if(showCapsule) setShowCapsule(false);
+                  setIsSaved(false);
+                }}
+                onFocus={() => setActiveMascot('journal')}
+                onBlur={() => setActiveMascot((prev) => (prev === 'journal' ? null : prev))}
+                placeholder=" "
+                aria-label="写几件今天工作上的事就行：例会、文档、跑腿、被骂了也算，流水账就可以"
+                className="relative z-[6] box-border block h-[118px] w-full resize-none border-0 bg-transparent p-4 text-left text-[13px] font-medium leading-relaxed text-slate-600 outline-none placeholder:text-transparent overflow-y-auto overflow-x-hidden overscroll-y-contain [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#C8B4FF]/35"
+              />
+            </div>
             <button
               type="button"
               aria-label="语音输入"
@@ -5008,7 +5020,7 @@ ${achievementInput}`,
               <span className="pointer-events-none absolute bottom-3 right-2 z-10 h-8 w-8 rounded-full border border-[#B99DFF]/45 animate-ping" />
             )}
             {recordingTarget === 'journal' && (
-              <p className="absolute right-12 top-2 z-20 rounded-full bg-[#F3EEFF] px-2.5 py-1 text-[10px] font-bold text-[#7D65C7] shadow-sm">
+              <p className="absolute right-3 top-2 z-20 max-w-[min(200px,calc(100%-4rem))] rounded-full bg-[#F3EEFF] px-2.5 py-1 text-center text-[10px] font-bold text-[#7D65C7] shadow-sm">
                 正在语音输入...
               </p>
             )}
