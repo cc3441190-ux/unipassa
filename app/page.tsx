@@ -7725,8 +7725,8 @@ const App = () => {
           </div>
         </div>
 
-        <div className="relative z-10 flex items-center justify-between mt-auto">
-          <div className="flex flex-col gap-2 flex-1 mr-6">
+        <div className="relative z-10 flex items-center justify-between gap-3 mt-auto">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
             <div className="flex items-center gap-1.5 text-[#56756D]/55">
               <Clock size={12} />
               <span className="text-xs font-bold">{scene.time}</span>
@@ -7751,6 +7751,7 @@ const App = () => {
           </div>
 
           <button 
+            type="button"
             onClick={(e) => { 
               e.stopPropagation();
               if (isHost) {
@@ -7763,7 +7764,7 @@ const App = () => {
                 handleJoin(scene.id);
               }
             }}
-            className={`px-6 py-3 rounded-[20px] font-black text-sm transition-all duration-300 ${
+            className={`shrink-0 whitespace-nowrap px-5 py-3 rounded-[20px] font-black text-sm transition-all duration-300 ${
               isInScene 
                 ? 'bg-white/60 text-[#56756D]/55 border border-white/70 shadow-none' 
                 : 'border border-white/70 bg-[linear-gradient(125deg,rgba(255,231,171,0.95)_0%,rgba(150,225,206,0.9)_100%)] text-[#2F3E46] shadow-[0_12px_22px_-14px_rgba(64,100,120,0.48)] active:translate-y-0.5 active:shadow-[0_8px_16px_-14px_rgba(64,100,120,0.45)]'
