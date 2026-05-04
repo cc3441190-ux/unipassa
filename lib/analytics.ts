@@ -23,7 +23,8 @@ export type TrackEventName =
   | 'scene_joined'           // 3. 首次成功加入局
   | 'feed_published'         // 4. 首次发布情报
   | 'ai_tool_used'           // 5. 使用 AI 工具（EQ/成就胶囊/AI对话）
-  | 'dazi_pm_send';          // 6. 搭子私聊发送消息
+  | 'dazi_pm_send'           // 6. 搭子私聊发送消息
+  | 'logout';                // 7. 退出登录（清除本机会话）
 
 export function track(event: TrackEventName, props?: Record<string, unknown>) {
   if (typeof window === 'undefined') return;

@@ -51,7 +51,8 @@ import {
   Pencil,
   GraduationCap,
   Loader2,
-  MailCheck
+  MailCheck,
+  LogOut
 } from 'lucide-react';
 
 // --- 配置常量 ---
@@ -305,7 +306,6 @@ function adaptFeed(row: any) {
 
 type AppSceneRow = ReturnType<typeof adaptScene>;
 type AppFeedRow = ReturnType<typeof adaptFeed>;
-const HOME_NEARBY_SCENES_MIN = 10;
 const COMMUNITY_VISIBLE_FEEDS_MIN = 20;
 
 function isSyntheticSceneId(id: number) {
@@ -5397,6 +5397,7 @@ const UserProfile = ({
   onGoMessage,
   onRemoveDazi,
   onOpenStudentVerify,
+  onLogout,
 }: {
   dazis: DaziItem[];
   achievements: { id: string; tag: string; desc: string }[];
@@ -5410,6 +5411,7 @@ const UserProfile = ({
   onGoMessage: () => void;
   onRemoveDazi: (id: number) => void;
   onOpenStudentVerify: () => void;
+  onLogout: () => void;
 }) => {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   /** 挂载到 document.body：避免外层手机壳 overflow-hidden 裁切下拉菜单，出现「只剩午饭搭子一条」的假 bug */
@@ -5784,6 +5786,17 @@ const UserProfile = ({
               : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
           </button>
         </div>
+      </div>
+
+      <div className="mb-2 flex justify-center">
+        <button
+          type="button"
+          onClick={onLogout}
+          className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium text-[#94A3B8] transition-colors hover:bg-white/40 hover:text-[#64748B] active:scale-[0.98]"
+        >
+          <LogOut size={12} strokeWidth={2} className="opacity-80" aria-hidden />
+          退出登录
+        </button>
       </div>
 
       {typeof document !== 'undefined' &&
@@ -7415,6 +7428,56 @@ const App = () => {
     setShowPrivateChat((open) => (open?.id === id ? null : open));
   }, []);
 
+  const handleLogout = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      const ok = window.confirm(
+        '确定退出登录？\n将清除本机资料、搭子、成就胶囊与聊天记录等，并返回登录页。'
+      );
+      if (!ok) return;
+    }
+    track('logout', {});
+    clearAllUnipassLocalStorage();
+    const gid = getOrCreateGuestId();
+    guestIdRef.current = gid;
+    setGuestId(gid);
+    setUserProfile(null);
+    setJoinedIds([]);
+    setDazis([]);
+    setAchievements([]);
+    setAiChatMessages(defaultAiWelcome(null));
+    setUserLocation(null);
+    setActiveTab('home');
+    setFeedCommentsMap({});
+    setSceneIcebreakDoneIds([]);
+    setDemoSceneJoinBoost({});
+    setSyntheticFeedLikeDelta({});
+    setSyntheticFeedCommentBoost({});
+    setLikedFeedIds(new Set());
+    setFeedAiTipsCache({});
+    setAdvancedSceneFilters(DEFAULT_ADVANCED_SCENE_FILTERS);
+    setActiveFilter('全部');
+    setMessageFilter('全部');
+    setCommunityTag('全部');
+    setCommunityCompanyOnly(false);
+    setCommunityCityOnly(false);
+    setRemoteDataReady(false);
+    setShowChatId(null);
+    setShowPreviewId(null);
+    setShowFeedDetailId(null);
+    setShowPublishModal(false);
+    setShowResumeLab(false);
+    setShowPrivacyShield(false);
+    setShowStudentVerify(false);
+    setShowAnonymousProfile(null);
+    setShowPrivateChat(null);
+    setShowAIChat(false);
+    setShowEditProfileModal(false);
+    setExitConfirmId(null);
+    setShowAdvancedFilter(false);
+    setShowQuickBuild(false);
+    setAppState('login');
+  }, []);
+
   const handleUpdateProfile = useCallback(
     (next: { nickname: string; company: string; gender: string; role: string; avatar: string }) => {
       setUserProfile(next);
@@ -7608,62 +7671,14 @@ const App = () => {
       })
   ), [baseVisibleScenes]);
 
-  const passesSceneExclusiveGate = useCallback(
-    (scene: AppSceneRow) => {
-      if (!scene.exclusive) return true;
-      if (!userProfile) return true;
-      if (scene.exclusive === 'female' && userProfile.gender !== 'female') return false;
-      if (scene.exclusive === 'male' && userProfile.gender !== 'male') return false;
-      if (scene.exclusive === 'company' && !userProfile.company) return false;
-      return true;
-    },
-    [userProfile]
+  /** 首页局列表：快捷标签 × 用户信息门禁 × 高级筛选（距离 / 规模 / 专属门禁）全部生效；不再为凑条数塞回未通过筛选的局 */
+  const visibleScenes = useMemo(
+    () =>
+      applyAdvancedSceneFilters(advancedSceneFilters).sort(
+        (a, b) => a._distanceMeters - b._distanceMeters
+      ),
+    [advancedSceneFilters, applyAdvancedSceneFilters]
   );
-
-  // ✨ 根据用户信息过滤展示的局 + 按与当前位置真实距离排序（高级筛过狠时用仅「快捷标签」通过的局补齐条数）
-  const visibleScenes = useMemo(() => {
-    const primary = applyAdvancedSceneFilters(advancedSceneFilters).sort(
-      (a, b) => a._distanceMeters - b._distanceMeters
-    );
-    if (primary.length >= HOME_NEARBY_SCENES_MIN) return primary;
-    const seen = new Set(primary.map((s) => s.id));
-    const out = [...primary];
-
-    const advEx = advancedSceneFilters.exclusive;
-    for (const row of baseVisibleScenes) {
-      if (out.length >= HOME_NEARBY_SCENES_MIN) break;
-      if (seen.has(row.id)) continue;
-      if (advEx && row.exclusive !== advEx) continue;
-      seen.add(row.id);
-      out.push(row);
-    }
-
-    if (out.length < HOME_NEARBY_SCENES_MIN) {
-      for (const seed of buildFallbackHomeScenes(activeFilter)) {
-        const scene = scenesWithFallback.find((s) => s.id === seed.id) ?? seed;
-        if (out.length >= HOME_NEARBY_SCENES_MIN) break;
-        if (seen.has(scene.id)) continue;
-        if (!passesSceneExclusiveGate(scene)) continue;
-        if (!matchesQuickSceneFilter(scene, activeFilter)) continue;
-        if (advEx && scene.exclusive !== advEx) continue;
-        const meters = getSceneDistanceMeters(scene);
-        const distanceLabel = Number.isFinite(meters) ? formatMeters(meters) : (scene.distance || '附近');
-        const row = { ...scene, _distanceMeters: meters, _distanceLabel: distanceLabel };
-        seen.add(scene.id);
-        out.push(row);
-      }
-    }
-
-    return out.sort((a, b) => a._distanceMeters - b._distanceMeters);
-  }, [
-    activeFilter,
-    advancedSceneFilters,
-    applyAdvancedSceneFilters,
-    baseVisibleScenes,
-    scenesWithFallback,
-    getSceneDistanceMeters,
-    passesSceneExclusiveGate,
-  ]);
 
   const ScenePass = ({ scene }) => {
     const isHost = !!(guestId && scene.hostGuestId && scene.hostGuestId === guestId);
@@ -8059,6 +8074,7 @@ const App = () => {
                   onGoMessage={() => setActiveTab('message')}
                   onRemoveDazi={handleRemoveDazi}
                   onOpenStudentVerify={() => setShowStudentVerify(true)}
+                  onLogout={handleLogout}
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-slate-300 font-black uppercase tracking-widest">
