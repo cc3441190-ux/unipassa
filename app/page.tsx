@@ -21,7 +21,6 @@ import {
   Zap, 
   Heart,
   MessageCircle,
-  Share2,
   ArrowLeft,
   CheckCircle2,
   Image as ImageIcon,
@@ -52,7 +51,7 @@ import {
   GraduationCap,
   Loader2,
   MailCheck,
-  LogOut
+  LogOut,
 } from 'lucide-react';
 
 // --- 配置常量 ---
@@ -521,6 +520,18 @@ function normalizeTag(tag: string): string {
   return tag.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
 }
 
+/** 发布后多为「图标 + 空格 + 文案」，拆成左侧 emoji / 右侧文字以贴合胶囊标签视觉 */
+function splitFeedTagLeadingIcon(raw: string): { icon: string | null; label: string } {
+  const tag = raw.trim();
+  const sp = tag.indexOf(' ');
+  if (sp > 0) {
+    const head = tag.slice(0, sp);
+    const rest = tag.slice(sp + 1).trim();
+    if (rest.length > 0) return { icon: head, label: rest };
+  }
+  return { icon: null, label: tag };
+}
+
 function matchCommunityTag(feed: ReturnType<typeof adaptFeed>, activeTag: string): boolean {
   if (activeTag === '全部') return true;
   const text = `${feed.content ?? ''} ${(feed.tags ?? []).join(' ')}`.toLowerCase();
@@ -551,15 +562,123 @@ function isCompanyRelatedFeed(feed: ReturnType<typeof adaptFeed>, company: strin
   return haystack.includes(target.toLowerCase()) || haystack.includes('同公司');
 }
 
-function buildFeedAiTip(feed: ReturnType<typeof adaptFeed>, cached?: string): string {
-  if (cached) return cached;
-  
-  const text = `${feed.content ?? ''} ${(feed.tags ?? []).join(' ')}`;
-  if (/求助|紧急|救急/.test(text)) return 'AI 建议：补充“时间/地点/具体诉求”三要素，能更快获得有效回复。';
-  if (/吐槽|避雷|崩溃/.test(text)) return 'AI 建议：尽量聚焦事实与时间点，避免情绪化表达，更容易得到建设性建议。';
-  if (/咖啡|食堂|餐厅|好吃|推荐/.test(text)) return 'AI 建议：加上人均、排队时段和口味标签，这条情报会更有参考价值。';
-  if (/地铁|通勤|打车|拥堵|高峰/.test(text)) return 'AI 建议：可补充具体时间窗口，帮助同城同事错峰通勤。';
-  return 'AI 提示：这条内容可再补一条“最有用的一句话结论”，阅读转化会更高。';
+/** 异步摘要未返回时的本地速读占位（尽量不瞎编结论，只做摘录）。 */
+function buildFallbackReaderDigest(feed: ReturnType<typeof adaptFeed>): string {
+  const tags = (feed.tags ?? []).filter(Boolean).join('、');
+  const raw = (feed.content ?? '').trim().replace(/\s+/g, ' ');
+  if (!raw && tags) return `${tags} 相关动态，详情请读正文`;
+  if (!raw) return '暂无正文节选，点开可查看全文';
+
+  if (raw.length <= 44) return raw;
+
+  const parts = raw.split(/(?<=[。！？!?])/);
+  const firstSentence = parts[0]?.trim() ?? '';
+  if (firstSentence.length >= 12 && firstSentence.length <= 72 && firstSentence.length < raw.length) {
+    return `${firstSentence}…`;
+  }
+  return `${raw.slice(0, 40).replace(/[，、；;,\s]+$/, '')}…`;
+}
+
+function buildFeedReaderDigest(feed: ReturnType<typeof adaptFeed>, cached?: string): string {
+  if (cached) return cached.trim();
+  return buildFallbackReaderDigest(feed);
+}
+
+/** 超过该字数一般认为需要速读框；更短则需「信息很散」才展示。 */
+const FEED_READER_DIGEST_MIN_CHARS = 50;
+
+/** 粗略判断正文是否「信息很散」：多句、多段、分列点或碎片化逗号分段。 */
+function isScatterIntelBody(text: string): boolean {
+  const raw = text.trim().replace(/\s+/g, ' ');
+  if (raw.length < 22) return false;
+
+  const sentences = raw
+    .split(/[。！？!?]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 4);
+  if (sentences.length >= 3) return true;
+
+  const meaningfulLines = raw.split(/\n/).map((l) => l.trim()).filter((l) => l.length > 8);
+  if (meaningfulLines.length >= 3) return true;
+
+  const delims = (raw.match(/[,，；;、]/g) ?? []).length;
+  if (raw.length >= 30 && delims >= 5) return true;
+
+  if (raw.length >= 18) {
+    const bullets = raw.match(/[①②③④⑤⑥⑦⑧⑨⑩⓪❶❷❸]|(?:^|\n)\s*[•·▪●◦]\s+|(?:^|\n)\s*\d+[。.、]\s+/g);
+    if (bullets && bullets.length >= 2) return true;
+  }
+
+  return false;
+}
+
+/** 是否在读者端展示「AI 速读」：正文够长，或较短但足够散需要帮你抓重点。 */
+function shouldShowFeedReaderDigest(feed: ReturnType<typeof adaptFeed>): boolean {
+  const raw = (feed.content ?? '').trim().replace(/\s+/g, ' ');
+  if (!raw.length) return false;
+  if (raw.length >= FEED_READER_DIGEST_MIN_CHARS) return true;
+  return isScatterIntelBody(raw);
+}
+
+/** 仅用于「发布情报」编辑页：根据草稿与分类给作者的写帖建议（读者端不展示）。 */
+function buildPublishAuthorTip(draft: string, categoryId: string | undefined): string {
+  const catTag =
+    categoryId === 'help'
+      ? '求助'
+      : categoryId === 'vent'
+        ? '吐槽'
+        : categoryId === 'place'
+          ? '推荐'
+          : categoryId === 'trick'
+            ? '技巧'
+            : categoryId === 'photo'
+              ? '打卡'
+              : '';
+  const text = `${draft} ${catTag}`;
+  if (/求助|紧急|救急/.test(text) || categoryId === 'help') {
+    return '补充「时间 / 地点 / 具体诉求」三要素，能更快获得有效回复。';
+  }
+  if (/吐槽|避雷|崩溃/.test(text) || categoryId === 'vent') {
+    return '尽量写清事实与时间点，少用纯情绪堆砌，更容易得到建设性建议。';
+  }
+  if (/咖啡|食堂|餐厅|好吃|推荐/.test(text) || categoryId === 'place') {
+    return '可加人均、排队时段和口味标签，情报参考价值会更高。';
+  }
+  if (/地铁|通勤|打车|拥堵|高峰/.test(text)) {
+    return '可补充具体时间窗口，方便同城同事错峰通勤。';
+  }
+  if (categoryId === 'photo') {
+    return '可写清拍摄地点与时段，并点明「适合谁」，同公司同学更好抄作业。';
+  }
+  if (categoryId === 'trick') {
+    return '尽量写清「适用场景 + 关键一步」，方便同公司的人直接复用。';
+  }
+  return '可加一句「最有用的结论」，方便划过的人一秒 get 重点。';
+}
+
+/** 圈子「AI 嘴替」请求文案（与 /api/chat mode=feed-comment 配套） */
+function buildFeedAiMouthpieceUserPrompt(feed: ReturnType<typeof adaptFeed>): string {
+  return (
+    `请基于这条圈子内容给我「高情商嘴替」，用于友好评论或私聊补充。\n\n` +
+    `内容：${feed.content ?? ''}\n位置：${feed.location ?? ''}\n标签：${(feed.tags ?? []).join('、') || '无'}\n` +
+    `要求：给出 3 条可直接复制的话术，每条不超过 35 字；每条单独一行；行首用 ①②③ 标记。`
+  );
+}
+
+function splitMouthpieceLines(raw: string): string[] {
+  const lines = raw
+    .replace(/\*\*/g, '')
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/^\s*(?:[\d]+\s*[\.\)、．]|[-*•·]\s*)/, '')
+        .replace(/^\s*[①②③④⑤⑥]\s*[\.．、]?\s*/, '')
+        .trim(),
+    )
+    .filter((l) => l.length > 1);
+  if (lines.length >= 2) return lines.slice(0, 5);
+  const one = raw.replace(/\*\*/g, '').trim();
+  return one ? [one] : [];
 }
 
 function buildCommunityDigest(
@@ -3502,37 +3621,117 @@ const DetailView = ({
 };
 
 // --- ✨ 情报详情抽屉 (Feed Detail Modal) ---
+/** 情报详情底部工具栏图标按钮 — 三套一致圆角方块（赞 / 发送 / AI嘴替） */
+const FEED_DETAIL_ACTION_ICON_BTN =
+  'w-11 h-11 min-w-11 min-h-11 shrink-0 aspect-square rounded-[14px] flex items-center justify-center border bg-white shadow-sm active:scale-90 transition-transform';
+
 const FeedDetailModal = ({
   feed,
   onClose,
   comments,
   onLike,
   onAddComment,
-  onSummonAi,
-  aiTipsCache,
+  isLiked,
+  aiDigestCache,
 }: {
   feed: ReturnType<typeof adaptFeed> | undefined;
   onClose: () => void;
   comments: FeedCommentItem[];
   onLike: (feedId: number) => void;
   onAddComment: (feedId: number, text: string) => void;
-  onSummonAi: (feed: ReturnType<typeof adaptFeed>) => void;
-  aiTipsCache?: Record<number, string>;
+  isLiked: boolean;
+  aiDigestCache?: Record<number, string>;
 }) => {
   if (!feed) return null;
   const [commentInput, setCommentInput] = useState('');
   const [actionHint, setActionHint] = useState('');
   const [isSendingComment, setIsSendingComment] = useState(false);
-  const aiTip = buildFeedAiTip(feed, aiTipsCache?.[feed.id]);
+  const [aiMouthOpen, setAiMouthOpen] = useState(false);
+  const [aiMouthLoading, setAiMouthLoading] = useState(false);
+  const [aiMouthError, setAiMouthError] = useState<string | null>(null);
+  const [aiMouthRaw, setAiMouthRaw] = useState('');
+  const mouthpieceCacheRef = useRef<Record<number, string>>({});
+  const mouthpieceAbortRef = useRef<AbortController | null>(null);
+  const reduceMotion = useReducedMotion();
+  const showReaderDigest = shouldShowFeedReaderDigest(feed);
+  const readerDigest = buildFeedReaderDigest(feed, aiDigestCache?.[feed.id]);
   const displayComments = comments ?? [];
+  const mouthLines = useMemo(() => splitMouthpieceLines(aiMouthRaw), [aiMouthRaw]);
+
+  useEffect(() => {
+    mouthpieceAbortRef.current?.abort();
+    setAiMouthOpen(false);
+    setAiMouthRaw('');
+    setAiMouthError(null);
+    setAiMouthLoading(false);
+  }, [feed.id]);
+
+  const closeMouthpieceSheet = useCallback(() => {
+    mouthpieceAbortRef.current?.abort();
+    setAiMouthOpen(false);
+  }, []);
+
+  const runMouthpieceRequest = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!feed) return;
+      if (opts?.force) delete mouthpieceCacheRef.current[feed.id];
+      const cached = mouthpieceCacheRef.current[feed.id];
+      if (cached && !opts?.force) {
+        setAiMouthRaw(cached);
+        setAiMouthLoading(false);
+        setAiMouthError(null);
+        return;
+      }
+      mouthpieceAbortRef.current?.abort();
+      const ac = new AbortController();
+      mouthpieceAbortRef.current = ac;
+      setAiMouthLoading(true);
+      setAiMouthError(null);
+      setAiMouthRaw('');
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [{ role: 'user', content: buildFeedAiMouthpieceUserPrompt(feed) }],
+            mode: 'feed-comment',
+          }),
+          signal: ac.signal,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : '生成失败');
+        const text = String(data.result ?? '').trim();
+        if (!text) throw new Error('暂时没有内容，请重试');
+        mouthpieceCacheRef.current[feed.id] = text;
+        setAiMouthRaw(text);
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+        setAiMouthError((e as Error).message === 'Failed to fetch' ? '网络异常，请稍后重试' : (e as Error).message || '请稍后重试');
+      } finally {
+        setAiMouthLoading(false);
+      }
+    },
+    [feed],
+  );
+
+  const openMouthpieceSheet = useCallback(() => {
+    if (!feed) return;
+    setAiMouthOpen(true);
+    void runMouthpieceRequest();
+  }, [feed, runMouthpieceRequest]);
+
+  const sendCommentText = (raw: string, hint: string, clearDraft?: boolean) => {
+    const text = raw.trim();
+    if (!text || isSendingComment) return;
+    setIsSendingComment(true);
+    onAddComment(feed.id, text);
+    if (clearDraft) setCommentInput('');
+    setActionHint(hint);
+    setTimeout(() => setIsSendingComment(false), 800);
+  };
 
   const submitComment = () => {
-    if (!commentInput.trim() || isSendingComment) return;
-    setIsSendingComment(true);
-    onAddComment(feed.id, commentInput.trim());
-    setCommentInput('');
-    setActionHint('评论已发送');
-    setTimeout(() => setIsSendingComment(false), 800);
+    sendCommentText(commentInput, '评论已发送', true);
   };
 
   return (
@@ -3582,19 +3781,23 @@ const FeedDetailModal = ({
             )}
           </div>
 
-          {/* AI Insight Card */}
-          <div className="px-6 mb-8">
-            <div className="bg-gradient-to-br from-[#F9D8B1]/30 to-white/50 rounded-[24px] p-5 border border-[#F9D8B1]/40 shadow-sm relative overflow-hidden">
-              <div className="absolute -top-4 -right-4 w-20 h-20 bg-white/60 rounded-full blur-xl"></div>
-              <div className="flex items-center gap-2 mb-2 relative z-10">
-                <Sparkles size={16} className="text-[#F3B671]" />
-                <span className="text-[12px] font-black text-amber-700 tracking-wider">AI 避雷提示</span>
+          {showReaderDigest && (
+            <div className="px-6 mb-8">
+              <div className="bg-gradient-to-br from-[#F9D8B1]/30 to-white/50 rounded-[24px] p-5 border border-[#F9D8B1]/40 shadow-sm relative overflow-hidden">
+                <div className="absolute -top-4 -right-4 w-20 h-20 bg-white/60 rounded-full blur-xl"></div>
+                <div className="relative z-10">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Sparkles size={16} className="text-[#3D8B83]" />
+                    <span className="text-[12px] font-black text-[#2F6F6F] tracking-wider">AI 速读</span>
+                  </div>
+                  <p className="text-[13px] font-bold text-[#2F3E46]/85 leading-relaxed">{readerDigest}</p>
+                  <p className="mt-2 text-[10px] font-bold text-[#56756D]/45">
+                    内容由 AI 结合正文与标签整理，重要信息请以原文为准。
+                  </p>
+                </div>
               </div>
-              <p className="text-[13px] font-bold text-amber-900/70 leading-relaxed relative z-10">
-                {aiTip}
-              </p>
             </div>
-          </div>
+          )}
 
           {/* Comments Section */}
           <div className="px-6 pb-6">
@@ -3621,7 +3824,8 @@ const FeedDetailModal = ({
                 <span className="text-3xl opacity-50 mb-3">💬</span>
                 <p className="text-[12px] font-bold text-slate-400 mb-4 text-center leading-relaxed">这里还没有情报补充，<br/>你可以问问 AI 怎么看？</p>
                 <button
-                  onClick={() => onSummonAi(feed)}
+                  type="button"
+                  onClick={openMouthpieceSheet}
                   className="px-5 py-2.5 bg-[#87A382]/10 text-[#87A382] rounded-[16px] text-[12px] font-black flex items-center gap-1.5 active:scale-95 transition-transform border border-[#87A382]/20"
                 >
                   <Bot size={14} /> 召唤 AI 嘴替
@@ -3650,47 +3854,203 @@ const FeedDetailModal = ({
             <Smile size={16} className="text-slate-400 ml-2" />
           </div>
           <button
+            type="button"
             onClick={() => {
               onLike(feed.id);
               setActionHint('已点赞 +1');
             }}
-            className="w-11 h-11 min-w-11 min-h-11 shrink-0 aspect-square rounded-[14px] bg-amber-50 text-amber-500 flex items-center justify-center border border-amber-100 shadow-sm active:scale-90 transition-transform"
+            className={`${FEED_DETAIL_ACTION_ICON_BTN} ${
+              isLiked
+                ? 'border-rose-200/95 bg-rose-50 text-rose-500'
+                : 'border-slate-200/90 text-slate-500'
+            }`}
             aria-label="点赞"
           >
-            <Heart size={19} />
+            <Heart size={19} className={isLiked ? 'fill-current' : ''} />
           </button>
           <button
-            onClick={() => {
-              const text = `${feed.author} 在 UniPass 分享了情报：\n\n${feed.content}\n\n位置：${feed.location}\n标签：${(feed.tags ?? []).join('、')}`;
-              copyToClipboard(text);
-              setActionHint('已复制到剪贴板');
-            }}
-            className="w-11 h-11 min-w-11 min-h-11 shrink-0 aspect-square rounded-[14px] bg-slate-50 text-slate-500 flex items-center justify-center border border-slate-100 shadow-sm active:scale-90 transition-transform"
-            aria-label="分享"
-          >
-            <Share2 size={19} />
-          </button>
-          <button
+            type="button"
             onClick={() => {
               if (!commentInput.trim()) { setActionHint('先输入内容再评论'); return; }
               submitComment();
             }}
             disabled={isSendingComment}
-            className={`w-11 h-11 min-w-11 min-h-11 shrink-0 aspect-square rounded-[14px] flex items-center justify-center border shadow-sm transition-transform ${
+            className={`${FEED_DETAIL_ACTION_ICON_BTN} ${
               isSendingComment
-                ? 'bg-slate-50 text-slate-300 border-slate-100'
-                : 'bg-amber-50 text-amber-500 border-amber-100 active:scale-90'
+                ? 'border-slate-100 bg-slate-50 text-slate-300'
+                : 'border-slate-200/90 text-slate-600'
             }`}
             aria-label="评论发送"
           >
             {isSendingComment
-              ? <div className="w-4 h-4 border-2 border-amber-300 border-t-transparent rounded-full animate-spin" />
-              : <MessageCircle size={19} />
+              ? <div className="w-4 h-4 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
+              : <Send size={18} className="ml-0.5" />
             }
+          </button>
+          <button
+            type="button"
+            onClick={openMouthpieceSheet}
+            className={`${FEED_DETAIL_ACTION_ICON_BTN} border-slate-200/90 text-slate-600`}
+            aria-label="AI 嘴替"
+          >
+            <Bot size={20} strokeWidth={2.25} />
           </button>
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {aiMouthOpen && (
+          <>
+            <motion.button
+              type="button"
+              key="mouth-backdrop"
+              aria-label="关闭嘴替面板"
+              className="absolute inset-0 z-[1210] bg-[#2F3E46]/42 backdrop-blur-[3px]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.24 }}
+              onClick={closeMouthpieceSheet}
+            />
+            <motion.div
+              key="mouth-sheet"
+              role="dialog"
+              aria-labelledby="feed-mouthpiece-title"
+              aria-modal="true"
+              className="absolute bottom-0 left-0 right-0 z-[1220] flex max-h-[min(74vh,540px)] flex-col overflow-hidden rounded-t-[32px] border border-white/65 bg-[linear-gradient(168deg,rgba(255,252,247,0.99)_0%,rgba(245,250,248,0.97)_42%,rgba(232,246,238,0.96)_100%)] shadow-[0_-26px_64px_-22px_rgba(47,62,70,0.38)]"
+              initial={{ y: '108%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '108%' }}
+              transition={
+                reduceMotion ? { duration: 0.2, ease: 'easeOut' } : { type: 'spring', damping: 34, stiffness: 420 }
+              }
+            >
+              <div className="flex shrink-0 justify-center pt-2.5 pb-1" aria-hidden>
+                <div className="h-1 w-11 rounded-full bg-[#56756D]/16" />
+              </div>
+
+              <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-1">
+                <div id="feed-mouthpiece-title" className="flex min-w-0 flex-1 items-center gap-2.5">
+                  <motion.span
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[18px] border border-white/85 bg-[linear-gradient(143deg,rgba(150,225,206,0.52)_18%,rgba(176,204,248,0.42)_100%)] shadow-[0_10px_28px_-16px_rgba(64,100,120,0.42)]"
+                    initial={reduceMotion ? false : { scale: 0.88, rotate: -6 }}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: 'spring', damping: 18, stiffness: 280 }}
+                  >
+                    <Bot size={21} strokeWidth={2.1} className="text-[#2F3E46]" />
+                  </motion.span>
+                  <div className="min-w-0">
+                    <p className="truncate text-[16px] font-black tracking-tight text-[#2F3E46]">AI 嘴替</p>
+                    <p className="mt-0.5 text-[10px] font-bold leading-snug text-[#56756D]/48">
+                      高情商接话，点开就能复制发出去
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeMouthpieceSheet}
+                  className="shrink-0 rounded-full p-2 text-slate-400 transition-colors hover:bg-white/65 hover:text-slate-600 active:scale-90"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-2 no-scrollbar">
+                {aiMouthLoading && (
+                  <div className="space-y-3 py-1">
+                    {[0, 1, 2].map((i) => (
+                      <div
+                        key={i}
+                        className="h-[4.25rem] rounded-[22px] border border-white/70 bg-white/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] animate-pulse"
+                        style={{ animationDelay: reduceMotion ? '0ms' : `${i * 90}ms` }}
+                      />
+                    ))}
+                    <p className="pt-1 text-center text-[11px] font-bold text-[#6EAFA0]">正在读情报，帮你组织语气…</p>
+                  </div>
+                )}
+                {!aiMouthLoading && aiMouthError ? (
+                  <div className="rounded-[22px] border border-amber-100/90 bg-[linear-gradient(135deg,rgba(255,244,229,0.95)_0%,rgba(255,252,248,0.88)_100%)] px-4 py-4 shadow-sm">
+                    <p className="text-[13px] font-bold leading-snug text-amber-900/85">{aiMouthError}</p>
+                    <button
+                      type="button"
+                      onClick={() => void runMouthpieceRequest({ force: true })}
+                      className="mt-3 rounded-full bg-white/85 px-4 py-2 text-[12px] font-black text-[#B4873C] shadow-sm ring-1 ring-[#F9D8B1]/65 active:scale-95 transition-transform"
+                    >
+                      再试一次
+                    </button>
+                  </div>
+                ) : null}
+                {!aiMouthLoading && !aiMouthError && mouthLines.length > 0 ? (
+                  <ul className="flex flex-col gap-2.5 pb-3">
+                    {mouthLines.map((line, idx) => (
+                      <motion.li
+                        key={`${feed.id}-${idx}-${line.slice(0, 8)}`}
+                        layout
+                        initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: reduceMotion ? 0 : idx * 0.065, duration: reduceMotion ? 0 : 0.28 }}
+                        className="relative overflow-hidden rounded-[22px] border border-white/80 bg-white/74 p-4 pl-4 shadow-[0_14px_36px_-24px_rgba(64,100,120,0.45)] backdrop-blur-md transition-shadow hover:shadow-[0_18px_40px_-22px_rgba(64,100,120,0.38)]"
+                      >
+                        <div className="pointer-events-none absolute -right-10 -top-10 h-24 w-24 rounded-full bg-[radial-gradient(circle,rgba(150,225,206,0.35)_0%,rgba(255,255,255,0)_68%)]" />
+                        <div className="relative flex gap-3">
+                          <span className="mt-0.5 flex h-7 min-w-[1.75rem] items-center justify-center rounded-xl bg-[#2F3E46]/06 text-[12px] font-black text-[#6EAFA0]">
+                            {idx + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[14px] font-bold leading-relaxed text-[#2F3E46]">{line}</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  copyToClipboard(line);
+                                  setActionHint('已复制这条');
+                                }}
+                                className="inline-flex items-center rounded-full border border-[#6EAFA0]/35 bg-white/80 px-3 py-1.5 text-[11px] font-black text-[#2F8F7A] shadow-sm active:scale-95 transition-transform"
+                              >
+                                复制
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSendingComment}
+                                onClick={() => sendCommentText(line, '已将该条嘴替发出')}
+                                className="inline-flex items-center rounded-full border border-[#B4873C]/30 bg-[linear-gradient(125deg,rgba(255,231,171,0.55)_0%,rgba(150,225,206,0.45)_100%)] px-3 py-1.5 text-[11px] font-black text-[#2F3E46] shadow-sm disabled:opacity-40 active:scale-95 transition-transform"
+                              >
+                                一键发送
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+
+              <div className="flex shrink-0 gap-2.5 border-t border-white/55 bg-white/48 px-5 py-4 pb-[max(18px,env(safe-area-inset-bottom))] backdrop-blur-2xl">
+                <button
+                  type="button"
+                  disabled={aiMouthLoading || !!aiMouthError || mouthLines.length === 0}
+                  onClick={() => {
+                    copyToClipboard(mouthLines.join('\n'));
+                    setActionHint('已复制全部');
+                  }}
+                  className="flex-1 rounded-[18px] border border-white/85 bg-[linear-gradient(125deg,rgba(255,231,171,0.88)_0%,rgba(150,225,206,0.78)_100%)] py-3.5 text-[13px] font-black text-[#2F3E46] shadow-[0_12px_28px_-22px_rgba(64,100,120,0.45)] disabled:opacity-35 disabled:shadow-none active:scale-[0.98] transition-transform"
+                >
+                  一键复制全部
+                </button>
+                <button
+                  type="button"
+                  onClick={closeMouthpieceSheet}
+                  className="min-w-[5.25rem] rounded-[18px] border border-[#56756D]/14 bg-white/72 py-3.5 text-[13px] font-black text-[#56756D]/75 shadow-sm active:scale-[0.98] transition-transform"
+                >
+                  收起
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -3979,6 +4339,11 @@ const PublishModal = ({ onClose, onPublished, userProfile }) => {
     }
   };
 
+  const publishAuthorTip = useMemo(
+    () => buildPublishAuthorTip((polishedText ?? text).trim(), activeCat.id),
+    [polishedText, text, activeCat.id],
+  );
+
   return (
     <div className={`absolute inset-0 z-[1200] ${HOME_SURFACE.background} rounded-[55px] overflow-hidden flex flex-col animate-in slide-in-from-bottom-[100%] duration-500`}>
       <div className="pointer-events-none absolute -left-24 top-4 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(150,225,206,0.24)_0%,rgba(150,225,206,0)_72%)]" />
@@ -4024,6 +4389,14 @@ const PublishModal = ({ onClose, onPublished, userProfile }) => {
               </button>
             )
           })}
+        </div>
+
+        <div className="mt-3 shrink-0 rounded-[20px] border border-[#F9D8B1]/50 bg-[linear-gradient(125deg,rgba(255,231,171,0.38)_0%,rgba(255,255,255,0.7)_100%)] px-3.5 py-2.5 shadow-[0_8px_18px_-18px_rgba(64,100,120,0.35)] backdrop-blur-md">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Pencil size={13} className="shrink-0 text-[#B4873C]" />
+            <span className="text-[10px] font-black text-[#B4873C] tracking-wide">写帖建议</span>
+          </div>
+          <p className="text-[11px] font-bold leading-relaxed text-[#5C4D35]/88">{publishAuthorTip}</p>
         </div>
 
         <div className={`relative mt-4 flex min-h-[220px] shrink-0 flex-1 flex-col overflow-hidden rounded-[28px] ${HOME_SURFACE.glassCard} p-5`}>
@@ -5092,6 +5465,17 @@ ${achievementInput}`,
 };
 
 // --- ✨ [Tab 2] 实习情报局 (Community Feed) ---
+/** 圈子信息流卡片底部：点赞 / 评论 / AI嘴替 — 统一玻璃按钮样式（边框略加深，避免与白底融在一起） */
+const FEED_CARD_ACTION_BTN =
+  'flex items-center gap-1 rounded-[13px] border border-slate-200/50 bg-white/72 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_6px_16px_-12px_rgba(64,100,120,0.32)] backdrop-blur-md active:scale-90 transition-all';
+
+/** 圈子卡片标签：奶油底 + 蜜桃描边 + 焦糖字（对齐「实时情报」类参考 capsule，无重阴影） */
+const FEED_CARD_TAG_PILL_NEUTRAL =
+  'inline-flex max-w-full items-center gap-1 rounded-full border border-[#FEE6D5] bg-[#FFF9F2] px-3 py-1 text-[10px] font-black tracking-wide text-[#B35920]';
+
+const FEED_CARD_TAG_PILL_WARNING =
+  'inline-flex max-w-full items-center gap-1 rounded-full border border-red-200/90 bg-[#FFF5F5] px-3 py-1 text-[10px] font-black tracking-wide text-red-600';
+
 const CommunityFeed = ({
   onFeedClick,
   onUserClick,
@@ -5107,7 +5491,8 @@ const CommunityFeed = ({
   cityOnly,
   onToggleCityOnly,
   preferredCity,
-  aiTipsCache,
+  aiDigestCache,
+  likedFeedIds,
 }: {
   onFeedClick: (id: number) => void;
   onUserClick: (user: { name: string; avatar: string }) => void;
@@ -5123,7 +5508,8 @@ const CommunityFeed = ({
   cityOnly: boolean;
   onToggleCityOnly: () => void;
   preferredCity: string | null;
-  aiTipsCache?: Record<number, string>;
+  aiDigestCache?: Record<number, string>;
+  likedFeedIds: Set<number>;
 }) => {
   const visibleFeeds = useMemo(() => {
     const matches = (feed: AppFeedRow) => {
@@ -5290,7 +5676,9 @@ const CommunityFeed = ({
         </div>
       ) : (
       <div className="relative z-10 flex flex-col gap-4 shrink-0">
-        {visibleFeeds.map(feed => (
+        {visibleFeeds.map((feed) => {
+          const showReaderDigest = shouldShowFeedReaderDigest(feed);
+          return (
           <div 
             key={feed.id} 
             onClick={() => onFeedClick(feed.id)}
@@ -5326,10 +5714,14 @@ const CommunityFeed = ({
             <p className="relative z-10 text-[13px] font-medium text-[#40515A] leading-relaxed mb-4">
               {feed.content}
             </p>
-            <div className="relative z-10 mb-3 rounded-[18px] border border-white/70 bg-[linear-gradient(128deg,rgba(255,231,171,0.34)_0%,rgba(150,225,206,0.16)_100%)] px-3.5 py-2.5 shadow-[0_8px_18px_-16px_rgba(64,100,120,0.45)]">
-              <span className="text-[10px] font-black text-[#B4873C]">AI 提示：</span>
-              <span className="text-[11px] font-bold text-[#5C4D35]/75 ml-1">{buildFeedAiTip(feed, aiTipsCache?.[feed.id])}</span>
-            </div>
+            {showReaderDigest && (
+              <div className="relative z-10 mb-3 rounded-[18px] border border-white/70 bg-[linear-gradient(128deg,rgba(150,225,206,0.22)_0%,rgba(255,231,171,0.28)_100%)] px-3.5 py-2.5 shadow-[0_8px_18px_-16px_rgba(64,100,120,0.45)]">
+                <span className="text-[10px] font-black text-[#2F6F6F]">AI 速读</span>
+                <span className="mt-0.5 block text-[11px] font-bold leading-relaxed text-[#2F3E46]/88">
+                  {buildFeedReaderDigest(feed, aiDigestCache?.[feed.id])}
+                </span>
+              </div>
+            )}
 
             {feed.hasImage && (
               <div className="relative z-10 w-full h-32 bg-white/50 rounded-[20px] border border-white/70 mb-4 flex items-center justify-center text-[#9CB7C9] shadow-[inset_0_1px_8px_rgba(64,100,120,0.06)] backdrop-blur-md">
@@ -5337,47 +5729,61 @@ const CommunityFeed = ({
               </div>
             )}
             
-            <div className="relative z-10 flex justify-between items-end mt-auto pt-1">
-              <div className="flex flex-wrap gap-1.5 flex-1 pr-2">
+            <div className="relative z-10 mt-auto flex min-w-0 flex-col gap-2 pt-1">
+              <div className="flex min-w-0 flex-wrap gap-1.5">
                 {feed.tags.map(tag => {
                   const isWarning = tag.includes('避雷') || tag.includes('吐槽') || tag.includes('求助');
+                  const { icon, label } = splitFeedTagLeadingIcon(tag);
                   return (
-                    <span 
-                      key={tag} 
-                      className={`shrink-0 whitespace-nowrap px-2 py-1 rounded-[8px] text-[10px] font-black tracking-wide border ${
-                        isWarning 
-                          ? 'bg-red-50/80 text-red-500 border-red-100/80' 
-                          : 'bg-white/52 text-[#B4873C] border-white/70 backdrop-blur-md'
-                      }`}
+                    <span
+                      key={tag}
+                      className={`shrink-0 min-w-0 ${isWarning ? FEED_CARD_TAG_PILL_WARNING : FEED_CARD_TAG_PILL_NEUTRAL}`}
                     >
-                      {tag}
+                      {icon ? (
+                        <span className="relative top-px shrink-0 select-none text-[13px] leading-none" aria-hidden>
+                          {icon}
+                        </span>
+                      ) : null}
+                      <span className={icon ? 'min-w-0 truncate' : ''}>{label}</span>
                     </span>
                   );
                 })}
               </div>
-              <div className="flex items-center gap-3.5 shrink-0 text-[#56756D]/45">
+              <div className="flex w-full min-w-0 shrink-0 items-center justify-end gap-2">
                 <button
+                  type="button"
                   onClick={(e) => { e.stopPropagation(); onLike(feed.id); }}
-                  className="flex items-center gap-1 hover:text-red-400 active:scale-90 transition-all"
+                  className={`${FEED_CARD_ACTION_BTN} ${
+                    likedFeedIds.has(feed.id) ? 'text-rose-500 border-rose-200/85 bg-rose-50/70' : 'text-[#3D524D]'
+                  }`}
+                  aria-label="点赞"
                 >
-                  <Heart size={16}/><span className="text-[12px] font-bold">{feed.likes}</span>
+                  <Heart size={16} className={likedFeedIds.has(feed.id) ? 'fill-current' : ''} />
+                  <span className="text-[12px] font-bold tabular-nums">{feed.likes}</span>
                 </button>
                 <button
+                  type="button"
                   onClick={(e) => { e.stopPropagation(); onFeedClick(feed.id); }}
-                  className="flex items-center gap-1 hover:text-[#6EAFA0] active:scale-90 transition-all"
+                  className={`${FEED_CARD_ACTION_BTN} text-[#3D524D]`}
+                  aria-label="评论"
                 >
-                  <MessageCircle size={16}/><span className="text-[12px] font-bold">{feed.comments}</span>
+                  <MessageCircle size={16} />
+                  <span className="text-[12px] font-bold tabular-nums">{feed.comments}</span>
                 </button>
                 <button
+                  type="button"
                   onClick={(e) => { e.stopPropagation(); onSummonAi(feed); }}
-                  className="flex items-center gap-1 hover:text-[#2F3E46] active:scale-90 transition-all"
+                  className={`${FEED_CARD_ACTION_BTN} text-[#2F6F6F]`}
+                  aria-label="AI嘴替"
                 >
-                  <Bot size={16}/><span className="text-[12px] font-bold">AI嘴替</span>
+                  <Bot size={16} />
+                  <span className="text-[12px] font-bold">AI嘴替</span>
                 </button>
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       )}
     </div>
@@ -6792,7 +7198,7 @@ const App = () => {
   // ---- 真实数据状态 ----
   const [scenes, setScenes] = useState<ReturnType<typeof adaptScene>[]>([]);
   const [feeds, setFeeds] = useState<ReturnType<typeof adaptFeed>[]>([]);
-  const [feedAiTipsCache, setFeedAiTipsCache] = useState<Record<number, string>>({});
+  const [feedAiDigestCache, setFeedAiDigestCache] = useState<Record<number, string>>({});
   const [scenesLoading, setScenesLoading] = useState(true);
   const [feedsLoading, setFeedsLoading] = useState(true);
   const [scenesError, setScenesError] = useState<string | null>(null);
@@ -6914,7 +7320,6 @@ const App = () => {
       localStorage.getItem(STORAGE_KEYS.feedComments),
       {}
     );
-
     if (storedProfile) setUserProfile(storedProfile);
     if (storedJoinedIds.length > 0) setJoinedIds(storedJoinedIds);
     setSceneIcebreakDoneIds(
@@ -7173,14 +7578,14 @@ const App = () => {
     }
   }, [appState, loadScenes, loadFeeds, loadDazisFromServer]);
 
-  // 异步生成 feed AI 摘要缓存
+  // 异步生成 feed 「AI 速读」摘要（仅对会展示速读区的情报请求，节省接口）
   useEffect(() => {
     if (feeds.length === 0) return;
-    const needsGeneration = feeds.filter(f => !feedAiTipsCache[f.id]);
+    const needsGeneration = feeds.filter((f) => !feedAiDigestCache[f.id] && shouldShowFeedReaderDigest(f));
     if (needsGeneration.length === 0) return;
 
-    const generateAiTips = async () => {
-      const tips: Record<number, string> = { ...feedAiTipsCache };
+    const generateAiDigests = async () => {
+      const next: Record<number, string> = { ...feedAiDigestCache };
       for (const feed of needsGeneration.slice(0, 5)) {
         try {
           const res = await fetch('/api/chat', {
@@ -7188,27 +7593,30 @@ const App = () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               messages: [
-                { role: 'user', content: `请为这条圈子内容生成一句话的AI摘要，不超过20字，聚焦其实用价值：\n\n内容：${feed.content}\n标签：${(feed.tags ?? []).join('、') || '无'}` }
+                {
+                  role: 'user',
+                  content: `请用中文为这条「职场圈子情报」写一句「速读要点」，不超过 28 个字，只概括对浏览者有用的信息（地点/时间/结论/建议），不要评价作者、不要教对方怎么写帖、不要加引号或前缀：\n\n正文：${feed.content}\n标签：${(feed.tags ?? []).join('、') || '无'}`,
+                },
               ],
-              mode: 'feed-summary'
+              mode: 'feed-summary',
             }),
-            signal: AbortSignal.timeout(8000)
+            signal: AbortSignal.timeout(8000),
           });
           if (res.ok) {
             const data = await res.json();
             if (data.result) {
-              tips[feed.id] = data.result;
+              next[feed.id] = String(data.result).trim();
             }
           }
         } catch {
-          // 静默失败，保留默认摘要
+          // 静默失败，列表使用 buildFallbackReaderDigest
         }
       }
-      setFeedAiTipsCache(tips);
+      setFeedAiDigestCache(next);
     };
 
-    generateAiTips();
-  }, [feeds, feedAiTipsCache]);
+    generateAiDigests();
+  }, [feeds, feedAiDigestCache]);
 
   useEffect(() => {
     if (appState !== 'main' || typeof window === 'undefined') return;
@@ -7453,7 +7861,7 @@ const App = () => {
     setSyntheticFeedLikeDelta({});
     setSyntheticFeedCommentBoost({});
     setLikedFeedIds(new Set());
-    setFeedAiTipsCache({});
+    setFeedAiDigestCache({});
     setAdvancedSceneFilters(DEFAULT_ADVANCED_SCENE_FILTERS);
     setActiveFilter('全部');
     setMessageFilter('全部');
@@ -7586,9 +7994,7 @@ const App = () => {
   }, [userProfile?.avatar, userProfile?.nickname, guestId]);
 
   const handleSummonAiForFeed = useCallback((feed: ReturnType<typeof adaptFeed>) => {
-    const prompt = `请基于这条圈子内容给我一段“高情商嘴替”，用于友好评论或私聊补充。` +
-      `\n\n内容：${feed.content}\n位置：${feed.location}\n标签：${(feed.tags ?? []).join('、') || '无'}\n` +
-      `要求：给出 3 条可直接复制的话术，每条不超过 35 字。`;
+    const prompt = buildFeedAiMouthpieceUserPrompt(feed);
     const seededMessages = [
       ...defaultAiWelcome(userProfile),
       { role: 'user', content: prompt },
@@ -7601,9 +8007,8 @@ const App = () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            messages: seededMessages
-              .filter((m, i) => m.role !== 'assistant' || i > 0)
-              .map((m) => ({ role: m.role, content: m.content })),
+            messages: [{ role: 'user', content: prompt }],
+            mode: 'feed-comment',
           }),
           signal: AbortSignal.timeout(15000),
         });
@@ -7611,7 +8016,7 @@ const App = () => {
         const answer = res.ok
           ? (data.result || '我先给你一个简版：先共情，再给建议，最后给可执行动作。')
           : (data.error || 'AI 暂时不可用，请稍后再试');
-        setAiChatMessages((prev) => [...prev, { role: 'assistant', content: answer }]);
+        setAiChatMessages((prev) => [...prev, { role: 'assistant', content: typeof answer === 'string' ? answer : 'AI 暂时不可用，请稍后再试' }]);
       } catch {
         setAiChatMessages((prev) => [...prev, { role: 'assistant', content: '网络超时，请稍后重试 🙏' }]);
       }
@@ -8043,7 +8448,8 @@ const App = () => {
                   cityOnly={communityCityOnly}
                   onToggleCityOnly={() => setCommunityCityOnly((v) => !v)}
                   preferredCity={preferredFeedCity}
-                  aiTipsCache={feedAiTipsCache}
+                  aiDigestCache={feedAiDigestCache}
+                  likedFeedIds={likedFeedIds}
                 />
                 </>
               ) : activeTab === 'ai' ? (
@@ -8206,9 +8612,9 @@ const App = () => {
                   }
                   onLike={handleFeedLike}
                   onAddComment={handleFeedComment}
-                  onSummonAi={handleSummonAiForFeed}
+                  isLiked={likedFeedIds.has(showFeedDetailId)}
                   onClose={() => setShowFeedDetailId(null)}
-                  aiTipsCache={feedAiTipsCache}
+                  aiDigestCache={feedAiDigestCache}
                 />
               )}
               {showPreviewId && previewSceneForModal && (
