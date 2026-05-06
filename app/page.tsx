@@ -264,6 +264,20 @@ function formatRelativeTime(isoString: string): string {
   return `${Math.floor(hours / 24)}天前`;
 }
 
+type SceneProgressStatus = '待开始' | '进行中' | '已结束';
+
+function getSceneProgressStatus(timeText: string, now: Date = new Date()): SceneProgressStatus {
+  const txt = String(timeText ?? '').trim();
+  const m = txt.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (!m) return '待开始';
+  const targetMinutes = Number(m[1]) * 60 + Number(m[2]);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const delta = nowMinutes - targetMinutes;
+  if (delta < -15) return '待开始';
+  if (delta <= 120) return '进行中';
+  return '已结束';
+}
+
 function adaptScene(row: any) {
   const rawTime = row.meet_time ?? row.time ?? null;
   const time =
@@ -5810,8 +5824,11 @@ const CommunityFeed = ({
 // --- ✨ [Tab 5] 个人中心 / 数字领地 (User Profile) ---
 const UserProfile = ({
   dazis,
+  joinedScenes,
   achievements = [] as { id: string; tag: string; desc: string }[],
   onSetRole,
+  onOpenJoinedScene,
+  onGoHome,
   onOpenResumeLab,
   onOpenPrivacy,
   onEditProfile,
@@ -5823,8 +5840,11 @@ const UserProfile = ({
   onLogout,
 }: {
   dazis: DaziItem[];
+  joinedScenes: ReturnType<typeof adaptScene>[];
   achievements: { id: string; tag: string; desc: string }[];
   onSetRole: (id: number, tag: string) => void;
+  onOpenJoinedScene: (sceneId: number) => void;
+  onGoHome: () => void;
   onOpenResumeLab: () => void;
   onOpenPrivacy: () => void;
   onEditProfile: () => void;
@@ -6044,6 +6064,56 @@ const UserProfile = ({
               </p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* 我加入的局 */}
+      <div className={`mb-3 w-full shrink-0 !p-3 ${UI.profileSection}`}>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="flex items-center gap-1.5 text-[15px] font-bold text-slate-800">
+            <Calendar size={16} className="text-[#6EAFA0]" />
+            我加入的局
+          </h3>
+          <span className="text-[11px] font-bold text-slate-400">{joinedScenes.length} 个</span>
+        </div>
+        <div className="flex w-full flex-col gap-1.5">
+          {joinedScenes.length === 0 ? (
+            <div className="rounded-[14px] border border-dashed border-slate-200/80 bg-white/55 px-3 py-4 text-center">
+              <p className="text-[12px] font-bold text-slate-500">你还没有加入任何局</p>
+              <button
+                type="button"
+                onClick={onGoHome}
+                className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#EAF8F1] px-3 py-1.5 text-[11px] font-bold text-[#4E9B70] active:scale-95"
+              >
+                去首页逛局 <ChevronRight size={12} />
+              </button>
+            </div>
+          ) : joinedScenes.map((scene) => {
+            const status = getSceneProgressStatus(scene.time);
+            const statusClass =
+              status === '进行中'
+                ? 'bg-[#EAF8F1] text-[#2F8F61] border-[#BDE7D2]'
+                : status === '已结束'
+                  ? 'bg-slate-100 text-slate-500 border-slate-200'
+                  : 'bg-[#FFF5E8] text-[#B96A13] border-[#FFE3BF]';
+            return (
+              <button
+                type="button"
+                key={scene.id}
+                onClick={() => onOpenJoinedScene(scene.id)}
+                className="flex w-full items-center gap-2 rounded-[14px] border border-white/85 bg-white/75 px-3 py-2.5 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.92)] active:scale-[0.99]"
+              >
+                <span className="text-[18px] leading-none" aria-hidden>{scene.emoji || '👥'}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[12px] font-bold text-slate-800">{scene.title}</p>
+                  <p className="mt-0.5 text-[10px] font-semibold text-slate-400">{scene.time} · {scene.current}/{scene.total} 人</p>
+                </div>
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusClass}`}>
+                  {status}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -6296,6 +6366,7 @@ const UserProfile = ({
 // --- ✨ [Tab 4] 消息中心 (Message Center) ---
 const MessageCenter = ({
   dazis,
+  joinedSceneNotices,
   onOpenGroupChat,
   onOpenPrivateChat,
   onOpenAIChat,
@@ -6304,6 +6375,7 @@ const MessageCenter = ({
   onFilterChange,
 }: {
   dazis: DaziItem[];
+  joinedSceneNotices: ReturnType<typeof adaptScene>[];
   onOpenGroupChat: (sceneId: number) => void;
   onOpenPrivateChat: (dazi: { id: number; avatar: string; name: string; count: number; tag: string } | null) => void;
   onOpenAIChat: () => void;
@@ -6331,18 +6403,31 @@ const MessageCenter = ({
     pinned: false,
   }));
 
-  const allMessages = [AI_WELCOME, ...privateMsgs];
+  const joinedSceneSystemMsgs = joinedSceneNotices.map((scene) => ({
+    id: `joined-scene-${scene.id}`,
+    type: 'system',
+    name: '系统通知',
+    avatar: 'system',
+    preview: `你已加入「${scene.title}」，点击回到局内`,
+    time: scene.time || '刚刚',
+    unread: 1,
+    pinned: false,
+    sceneId: scene.id,
+  }));
+
+  const allMessages = [AI_WELCOME, ...joinedSceneSystemMsgs, ...privateMsgs];
   const groupMsgs: {id: string|number; type: string; name: string; avatar: string|string[]; preview: string; time: string; unread: number; pinned: boolean; sceneId?: number; tag?: string; tagColor?: string}[] = [];
 
   const filteredMessages = allMessages.filter(msg => {
     if (filter === '全部') return true;
     if (filter === '会话') return msg.type === 'group' || msg.type === 'private';
-    if (filter === '通知') return msg.type === 'ai';
+    if (filter === '通知') return msg.type === 'ai' || msg.type === 'system';
     return true;
   });
 
   const pinnedMsgs = filteredMessages.filter(m => m.pinned);
-  const normalMsgs = filteredMessages.filter(m => !m.pinned);
+  const visibleSystemMsgs = filter === '会话' ? [] : joinedSceneSystemMsgs;
+  const visiblePrivateMsgs = filter === '通知' ? [] : privateMsgs;
 
   const renderAvatar = (msg) => {
     if (msg.type === 'ai') {
@@ -6350,6 +6435,13 @@ const MessageCenter = ({
         <div className="w-12 h-12 rounded-[18px] bg-white/62 border border-white/70 flex items-center justify-center shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_8px_16px_-14px_rgba(64,100,120,0.45)] backdrop-blur-md shrink-0 relative">
           <Bot size={22} className="text-[#6EAFA0]" />
           <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#FFE68A] rounded-full border-2 border-white shadow-[0_0_8px_rgba(255,230,138,0.6)]"></div>
+        </div>
+      );
+    }
+    if (msg.type === 'system') {
+      return (
+        <div className="w-12 h-12 rounded-[18px] bg-white/62 border border-white/70 flex items-center justify-center shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_8px_16px_-14px_rgba(64,100,120,0.45)] backdrop-blur-md shrink-0 relative">
+          <Bell size={20} className="text-[#6EAFA0]" />
         </div>
       );
     }
@@ -6474,19 +6566,51 @@ const MessageCenter = ({
           </div>
         ))}
 
+        {/* 系统通知：加入局后、未发首条消息时的回访入口 */}
+        {visibleSystemMsgs.length > 0 && (
+          <div className="relative z-10 px-5 pt-4 pb-2 text-[11px] font-black text-[#56756D]/45 uppercase tracking-widest bg-white/25 border-b border-white/45 border-t border-white/50">
+            系统通知
+          </div>
+        )}
+        {visibleSystemMsgs.map((msg, index) => (
+          <div
+            key={msg.id}
+            onClick={() => {
+              if (typeof msg.sceneId === 'number') onOpenGroupChat(msg.sceneId);
+            }}
+            className={`relative z-10 flex items-center p-5 cursor-pointer active:bg-white/50 transition-colors ${index !== visibleSystemMsgs.length - 1 ? 'border-b border-white/50' : ''}`}
+          >
+            {renderAvatar(msg)}
+            <div className="flex-1 ml-3 min-w-0 pr-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[15px] font-black text-slate-800 truncate">{msg.name}</span>
+                <span className="text-[11px] font-bold text-slate-400 shrink-0 ml-2">{msg.time}</span>
+              </div>
+              <p className="text-[13px] font-medium text-[#56756D]/75 truncate pr-2">
+                {msg.preview}
+              </p>
+            </div>
+            {msg.unread > 0 && (
+              <div className="w-5 h-5 bg-[#FFE68A] rounded-full flex items-center justify-center text-[10px] font-black text-[#2F3E46] shrink-0 shadow-[0_0_8px_rgba(255,230,138,0.55)]">
+                {msg.unread}
+              </div>
+            )}
+          </div>
+        ))}
+
         {/* 第二区：私聊区 */}
-        {privateMsgs.length > 0 && (
+        {visiblePrivateMsgs.length > 0 && (
           <div className="relative z-10 px-5 pt-4 pb-2 text-[11px] font-black text-[#56756D]/45 uppercase tracking-widest bg-white/25 border-b border-white/45 border-t border-white/50">
             私聊区 (专属搭子)
           </div>
         )}
-        {privateMsgs.map((msg, index) => {
+        {visiblePrivateMsgs.map((msg, index) => {
           const dazi = dazis.find(d => d.name === msg.name);
           return (
             <div 
               key={msg.id} 
               onClick={() => onOpenPrivateChat(dazi ?? null)}
-              className={`relative z-10 flex items-center p-5 cursor-pointer active:bg-white/50 transition-colors ${index !== privateMsgs.length - 1 ? 'border-b border-white/50' : ''}`}
+              className={`relative z-10 flex items-center p-5 cursor-pointer active:bg-white/50 transition-colors ${index !== visiblePrivateMsgs.length - 1 ? 'border-b border-white/50' : ''}`}
             >
               {renderAvatar(msg)}
               <div className="flex-1 ml-3 min-w-0 pr-2">
@@ -7706,6 +7830,23 @@ const App = () => {
     );
   }, [scenes, activeFilter, demoSceneJoinBoost]);
 
+  const joinedScenes = useMemo(() => {
+    const byId = new Map(scenesWithFallback.map((s) => [s.id, s]));
+    const list = joinedIds
+      .map((id) => byId.get(id))
+      .filter((s): s is ReturnType<typeof adaptScene> => Boolean(s));
+    return list.sort((a, b) => {
+      const order = (s: ReturnType<typeof adaptScene>) =>
+        getSceneProgressStatus(s.time) === '进行中' ? 0 : getSceneProgressStatus(s.time) === '待开始' ? 1 : 2;
+      return order(a) - order(b);
+    });
+  }, [joinedIds, scenesWithFallback]);
+
+  const joinedSceneNotices = useMemo(
+    () => joinedScenes.filter((scene) => !sceneIcebreakDoneIds.includes(scene.id)),
+    [joinedScenes, sceneIcebreakDoneIds]
+  );
+
   const upsertDaziFromFirstSceneMessage = useCallback(
     (sceneId: number) => {
       const scene = scenesWithFallback.find(s => s.id === sceneId);
@@ -8458,6 +8599,7 @@ const App = () => {
               ) : activeTab === 'message' ? (
                 <MessageCenter 
                   dazis={dazis}
+                  joinedSceneNotices={joinedSceneNotices}
                   onOpenGroupChat={(sceneId) => setShowChatId(sceneId)}
                   onOpenPrivateChat={(dazi) => setShowPrivateChat(dazi)}
                   onOpenAIChat={() => setShowAIChat(true)}
@@ -8468,8 +8610,11 @@ const App = () => {
               ) : activeTab === 'profile' ? (
                 <UserProfile
                   dazis={dazis}
+                  joinedScenes={joinedScenes}
                   achievements={achievements}
                   onSetRole={handleSetRole}
+                  onOpenJoinedScene={(sceneId) => setShowChatId(sceneId)}
+                  onGoHome={() => setActiveTab('home')}
                   onOpenResumeLab={() => setShowResumeLab(true)}
                   onOpenPrivacy={() => setShowPrivacyShield(true)}
                   onEditProfile={() => setShowEditProfileModal(true)}
