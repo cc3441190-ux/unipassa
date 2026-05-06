@@ -3633,6 +3633,7 @@ const FeedDetailModal = ({
   onAddComment,
   isLiked,
   aiDigestCache,
+  aiAutoOpenToken,
 }: {
   feed: ReturnType<typeof adaptFeed> | undefined;
   onClose: () => void;
@@ -3641,6 +3642,7 @@ const FeedDetailModal = ({
   onAddComment: (feedId: number, text: string) => void;
   isLiked: boolean;
   aiDigestCache?: Record<number, string>;
+  aiAutoOpenToken?: number | null;
 }) => {
   if (!feed) return null;
   const [commentInput, setCommentInput] = useState('');
@@ -3719,6 +3721,11 @@ const FeedDetailModal = ({
     setAiMouthOpen(true);
     void runMouthpieceRequest();
   }, [feed, runMouthpieceRequest]);
+
+  useEffect(() => {
+    if (!aiAutoOpenToken) return;
+    openMouthpieceSheet();
+  }, [aiAutoOpenToken, openMouthpieceSheet]);
 
   const sendCommentText = (raw: string, hint: string, clearDraft?: boolean) => {
     const text = raw.trim();
@@ -5268,18 +5275,28 @@ ${achievementInput}`,
                   alt="职场IP"
                   loading="eager"
                   decoding="async"
-                  className="pointer-events-none absolute left-1 -top-3 z-0 h-[88px] w-auto drop-shadow-[0_10px_14px_rgba(53,75,68,0.24)]"
+                  className="pointer-events-none absolute left-1 -top-8 z-0 h-[88px] w-auto select-none drop-shadow-[0_10px_14px_rgba(53,75,68,0.24)]"
                 />
               )}
             </AnimatePresence>
-            <textarea
-              value={eqInput}
-              onChange={(e) => setEqInput(e.target.value)}
-              onFocus={() => setActiveMascot('eq')}
-              onBlur={() => setActiveMascot((prev) => (prev === 'eq' ? null : prev))}
-              placeholder="把你想说的丢给我，剩下的交给我 ✍️"
-              className="relative z-10 h-[112px] w-full resize-none rounded-[20px] border border-[#9BE4B8] bg-white px-4 pb-4 pt-12 pr-12 text-[13px] font-medium leading-relaxed text-slate-600 shadow-[0_0_0_1px_rgba(155,228,184,0.2),0_0_18px_rgba(116,213,159,0.32)] placeholder:text-slate-400/80 focus:outline-none focus:ring-2 focus:ring-[#8BE0AE]/35"
-            />
+            <div className="relative z-10 overflow-hidden rounded-[20px] border border-[#9BE4B8] bg-white shadow-[0_0_0_1px_rgba(155,228,184,0.2),0_0_18px_rgba(116,213,159,0.32)] focus-within:shadow-[inset_0_0_0_2px_rgba(139,224,174,0.35),0_0_0_1px_rgba(155,228,184,0.2),0_0_18px_rgba(116,213,159,0.32)]">
+              {!eqInput.trim() && activeMascot !== 'eq' && (
+                <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center p-4">
+                  <p className="w-full max-w-[19rem] text-left text-[13px] font-medium leading-relaxed text-slate-400/80">
+                    把你想说的丢给我，剩下的交给我 ✍️
+                  </p>
+                </div>
+              )}
+              <textarea
+                value={eqInput}
+                onChange={(e) => setEqInput(e.target.value)}
+                onFocus={() => setActiveMascot('eq')}
+                onBlur={() => setActiveMascot((prev) => (prev === 'eq' ? null : prev))}
+                placeholder=" "
+                aria-label="把你想说的丢给我，剩下的交给我"
+                className="relative z-[6] box-border block h-[118px] w-full resize-none border-0 bg-transparent p-4 text-left text-[13px] font-medium leading-relaxed text-slate-600 outline-none placeholder:text-transparent overflow-y-auto overflow-x-hidden overscroll-y-contain [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#9BE4B8]/40"
+              />
+            </div>
             <button
               type="button"
               aria-label="语音输入"
@@ -7168,6 +7185,7 @@ const App = () => {
   const [showChatId, setShowChatId] = useState<number | null>(null);
   const [showPreviewId, setShowPreviewId] = useState<number | null>(null);
   const [showFeedDetailId, setShowFeedDetailId] = useState<number | null>(null);
+  const [feedDetailAiAutoOpenToken, setFeedDetailAiAutoOpenToken] = useState<number | null>(null);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [showResumeLab, setShowResumeLab] = useState(false); 
   const [showPrivacyShield, setShowPrivacyShield] = useState(false);
@@ -7994,34 +8012,10 @@ const App = () => {
   }, [userProfile?.avatar, userProfile?.nickname, guestId]);
 
   const handleSummonAiForFeed = useCallback((feed: ReturnType<typeof adaptFeed>) => {
-    const prompt = buildFeedAiMouthpieceUserPrompt(feed);
-    const seededMessages = [
-      ...defaultAiWelcome(userProfile),
-      { role: 'user', content: prompt },
-    ] as { role: 'user' | 'assistant'; content: string }[];
-    setAiChatMessages(seededMessages);
-    setShowAIChat(true);
-    void (async () => {
-      try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: [{ role: 'user', content: prompt }],
-            mode: 'feed-comment',
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
-        const data = await res.json();
-        const answer = res.ok
-          ? (data.result || '我先给你一个简版：先共情，再给建议，最后给可执行动作。')
-          : (data.error || 'AI 暂时不可用，请稍后再试');
-        setAiChatMessages((prev) => [...prev, { role: 'assistant', content: typeof answer === 'string' ? answer : 'AI 暂时不可用，请稍后再试' }]);
-      } catch {
-        setAiChatMessages((prev) => [...prev, { role: 'assistant', content: '网络超时，请稍后重试 🙏' }]);
-      }
-    })();
-  }, [userProfile]);
+    // 与详情页底部 AI 嘴替统一为同一入口：打开详情并自动展开嘴替面板
+    setShowFeedDetailId(feed.id);
+    setFeedDetailAiAutoOpenToken(Date.now());
+  }, []);
 
   const getSceneDistanceMeters = useCallback((scene: ReturnType<typeof adaptScene>) => {
     if (
@@ -8434,7 +8428,10 @@ const App = () => {
                     </div>
                   )}
                 <CommunityFeed 
-                  onFeedClick={(id) => setShowFeedDetailId(id)} 
+                  onFeedClick={(id) => {
+                    setFeedDetailAiAutoOpenToken(null);
+                    setShowFeedDetailId(id);
+                  }}
                   onUserClick={handleUserClick}
                   onLike={handleFeedLike}
                   onSummonAi={handleSummonAiForFeed}
@@ -8613,8 +8610,12 @@ const App = () => {
                   onLike={handleFeedLike}
                   onAddComment={handleFeedComment}
                   isLiked={likedFeedIds.has(showFeedDetailId)}
-                  onClose={() => setShowFeedDetailId(null)}
+                  onClose={() => {
+                    setShowFeedDetailId(null);
+                    setFeedDetailAiAutoOpenToken(null);
+                  }}
                   aiDigestCache={feedAiDigestCache}
+                  aiAutoOpenToken={feedDetailAiAutoOpenToken}
                 />
               )}
               {showPreviewId && previewSceneForModal && (
