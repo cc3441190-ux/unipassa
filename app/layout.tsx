@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -40,6 +41,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col" translate="no">
         {children}
+        <Analytics />
         {/* Umami 数据埋点（仅在配置了 NEXT_PUBLIC_UMAMI_WEBSITE_ID 时加载） */}
         {process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
           <Script
